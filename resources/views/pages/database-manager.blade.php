@@ -254,4 +254,5 @@
 
     @if($showCreateTable) @include('filament-database::pages.partials.create-table-modal') @endif
     @if($showAddColumn) @include('filament-database::pages.partials.add-column-modal') @endif
+    @include('filament-database::pages.partials.schema-diff')
 </x-filament-panels::page>

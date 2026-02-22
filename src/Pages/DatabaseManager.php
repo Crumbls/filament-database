@@ -328,6 +328,114 @@ class DatabaseManager extends Page implements HasTable
         $actions = [];
         $headerActions = [];
 
+        // Schema Snapshot action (database-level, always available since it's read-only)
+        if ($this->activeConnection && $this->isConnectionHealthy($this->activeConnection)) {
+            $headerActions[] = Action::make('snapshotSchema')
+                ->label('Snapshot Schema')
+                ->icon('heroicon-m-camera')
+                ->color('primary')
+                ->action(function () use ($plugin) {
+                    try {
+                        $schema = $this->captureSchema($this->activeConnection);
+                        $snapshotPath = $plugin->getSchemaSnapshotPath();
+                        
+                        // Ensure directory exists
+                        if (!is_dir($snapshotPath)) {
+                            mkdir($snapshotPath, 0755, true);
+                        }
+
+                        $filename = $this->activeConnection . '_' . date('Y-m-d_His') . '.json';
+                        $filepath = $snapshotPath . '/' . $filename;
+
+                        file_put_contents($filepath, json_encode([
+                            'connection' => $this->activeConnection,
+                            'timestamp' => now()->toIso8601String(),
+                            'schema' => $schema,
+                        ], JSON_PRETTY_PRINT));
+
+                        if ($plugin->shouldLogChanges()) {
+                            Log::info('[filament-database] Schema snapshot created', [
+                                'user' => auth()->id(),
+                                'connection' => $this->activeConnection,
+                                'file' => $filename,
+                            ]);
+                        }
+
+                        Notification::make()
+                            ->title('Schema snapshot created')
+                            ->body("Saved to: {$filename}")
+                            ->success()
+                            ->send();
+                    } catch (\Throwable $e) {
+                        Notification::make()
+                            ->title('Snapshot failed')
+                            ->body($e->getMessage())
+                            ->danger()
+                            ->send();
+                    }
+                });
+
+            $headerActions[] = Action::make('compareSchema')
+                ->label('Compare Schema')
+                ->icon('heroicon-m-arrows-right-left')
+                ->color('gray')
+                ->form([
+                    Components\Select::make('snapshot_file')
+                        ->label('Compare with Snapshot')
+                        ->options(function () use ($plugin) {
+                            $snapshotPath = $plugin->getSchemaSnapshotPath();
+                            if (!is_dir($snapshotPath)) {
+                                return [];
+                            }
+
+                            $files = array_diff(scandir($snapshotPath), ['.', '..']);
+                            $snapshots = [];
+
+                            foreach ($files as $file) {
+                                if (pathinfo($file, PATHINFO_EXTENSION) === 'json') {
+                                    $data = json_decode(file_get_contents($snapshotPath . '/' . $file), true);
+                                    if ($data && isset($data['connection']) && $data['connection'] === $this->activeConnection) {
+                                        $timestamp = $data['timestamp'] ?? '';
+                                        $label = $timestamp ? date('Y-m-d H:i:s', strtotime($timestamp)) : $file;
+                                        $snapshots[$file] = $label . ' (' . count($data['schema'] ?? []) . ' tables)';
+                                    }
+                                }
+                            }
+
+                            arsort($snapshots);
+                            return $snapshots;
+                        })
+                        ->required()
+                        ->native(false),
+                ])
+                ->action(function (array $data) use ($plugin) {
+                    try {
+                        $snapshotPath = $plugin->getSchemaSnapshotPath();
+                        $filepath = $snapshotPath . '/' . $data['snapshot_file'];
+
+                        if (!file_exists($filepath)) {
+                            throw new \Exception('Snapshot file not found');
+                        }
+
+                        $snapshotData = json_decode(file_get_contents($filepath), true);
+                        $oldSchema = $snapshotData['schema'] ?? [];
+
+                        $currentSchema = $this->captureSchema($this->activeConnection);
+                        $diff = $this->compareSchemas($oldSchema, $currentSchema);
+
+                        $this->selectedSnapshot = $snapshotData;
+                        $this->schemaDiff = $diff;
+                        $this->showSchemaDiff = true;
+                    } catch (\Throwable $e) {
+                        Notification::make()
+                            ->title('Comparison failed')
+                            ->body($e->getMessage())
+                            ->danger()
+                            ->send();
+                    }
+                });
+        }
+
         // Export action (always available, even in read-only mode)
         if ($this->activeTable) {
             $headerActions[] = Action::make('export')
@@ -1249,5 +1357,74 @@ class DatabaseManager extends Page implements HasTable
             'tinyInteger', 'unsignedBigInteger', 'unsignedInteger',
             'uuid',
         ];
+    }
+
+    // ─── Schema Diff & Migration Generator ─────────────────────
+
+    public function closeSchemaDiff(): void
+    {
+        $this->showSchemaDiff = false;
+        $this->selectedSnapshot = null;
+        $this->schemaDiff = null;
+        $this->generatedMigration = '';
+    }
+
+    public function generateMigrationCode(): void
+    {
+        if (!$this->schemaDiff) {
+            Notification::make()->title('No diff available')->warning()->send();
+            return;
+        }
+
+        try {
+            $this->generatedMigration = $this->generateMigration($this->schemaDiff, 'schema_changes');
+        } catch (\Throwable $e) {
+            Notification::make()->title('Migration generation failed')->body($e->getMessage())->danger()->send();
+        }
+    }
+
+    public function saveMigrationFile(): void
+    {
+        $plugin = static::getPlugin();
+
+        if ($plugin->isReadOnly()) {
+            Notification::make()->title('Read-only mode: cannot save migration file')->warning()->send();
+            return;
+        }
+
+        if (empty($this->generatedMigration)) {
+            Notification::make()->title('No migration generated')->warning()->send();
+            return;
+        }
+
+        try {
+            $migrationsPath = database_path('migrations');
+            
+            if (!is_dir($migrationsPath)) {
+                mkdir($migrationsPath, 0755, true);
+            }
+
+            $timestamp = date('Y_m_d_His');
+            $filename = "{$timestamp}_schema_changes.php";
+            $filepath = $migrationsPath . '/' . $filename;
+
+            file_put_contents($filepath, $this->generatedMigration);
+
+            if ($plugin->shouldLogChanges()) {
+                Log::info('[filament-database] Migration file created', [
+                    'user' => auth()->id(),
+                    'connection' => $this->activeConnection,
+                    'file' => $filename,
+                ]);
+            }
+
+            Notification::make()
+                ->title('Migration saved')
+                ->body("Saved to: database/migrations/{$filename}")
+                ->success()
+                ->send();
+        } catch (\Throwable $e) {
+            Notification::make()->title('Save failed')->body($e->getMessage())->danger()->send();
+        }
     }
 }
