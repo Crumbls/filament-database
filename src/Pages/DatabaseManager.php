@@ -192,6 +192,43 @@ class DatabaseManager extends Page implements HasTable
     }
 
     /**
+     * Get database overview statistics.
+     */
+    public function getDatabaseOverview(?string $connection = null): array
+    {
+        $conn = $connection ?? $this->activeConnection;
+        $tables = $this->getFilteredTables($conn);
+        
+        $totalTables = count($tables);
+        $totalRows = 0;
+        $largestTables = [];
+        
+        foreach ($tables as $table) {
+            $rowCount = $table['row_count'] ?? 0;
+            $totalRows += $rowCount;
+            $largestTables[] = [
+                'name' => $table['name'],
+                'rows' => $rowCount,
+            ];
+        }
+        
+        // Sort by row count descending and take top 10
+        usort($largestTables, fn($a, $b) => $b['rows'] <=> $a['rows']);
+        $largestTables = array_slice($largestTables, 0, 10);
+        
+        $driver = $this->getDriverName($conn);
+        $database = DB::connection($conn)->getDatabaseName();
+        
+        return [
+            'total_tables' => $totalTables,
+            'total_rows' => $totalRows,
+            'largest_tables' => $largestTables,
+            'driver' => $driver,
+            'database' => $database,
+        ];
+    }
+
+    /**
      * Get filtered table list respecting hideTables/showOnlyTables with row counts.
      */
     public function getFilteredTables(?string $connection = null): array

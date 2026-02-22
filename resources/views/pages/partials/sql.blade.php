@@ -1,6 +1,16 @@
 <div>
     <div class="fdb-field">
-        <textarea wire:model="sqlQuery" rows="4" placeholder="SELECT * FROM {{ $activeTable }} LIMIT 100" class="fdb-sql-textarea"></textarea>
+        <textarea 
+            wire:model="sqlQuery" 
+            rows="4" 
+            placeholder="SELECT * FROM {{ $activeTable }} LIMIT 100" 
+            class="fdb-sql-textarea"
+            @keydown.ctrl.enter="$wire.executeSql()"
+            @keydown.meta.enter="$wire.executeSql()"
+        ></textarea>
+        <p style="font-size: 0.75rem; color: var(--gray-500); margin-top: 0.25rem;">
+            Press <kbd style="padding: 0.125rem 0.375rem; background: var(--gray-200); border-radius: 0.25rem; font-family: monospace;">Ctrl+Enter</kbd> or <kbd style="padding: 0.125rem 0.375rem; background: var(--gray-200); border-radius: 0.25rem; font-family: monospace;">Cmd+Enter</kbd> to execute
+        </p>
     </div>
 
     <x-filament::button wire:click="executeSql" icon="heroicon-m-play">Execute</x-filament::button>

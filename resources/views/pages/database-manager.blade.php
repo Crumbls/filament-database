@@ -11,8 +11,26 @@
         .fdb-tab-bar > :first-child { flex: 1; min-width: 0; }
         .fdb-tab-actions { display: flex; gap: 0.5rem; flex-shrink: 0; }
         .fdb-content { margin-top: 1rem; }
+        .fdb-content .fi-ta { overflow-x: auto; }
+        .fdb-content .fi-ta-content { min-width: max-content; }
         .fdb-empty { display: flex; align-items: center; justify-content: center; height: 16rem; color: var(--gray-400); text-align: center; }
         .fdb-empty svg { width: 3rem; height: 3rem; margin: 0 auto 0.5rem; }
+
+        /* Overview Dashboard */
+        .fdb-overview { padding: 1rem 0; }
+        .fdb-overview-header { margin-bottom: 1.5rem; }
+        .fdb-overview-header h2 { font-size: 1.5rem; font-weight: 700; color: var(--gray-900); margin-bottom: 0.25rem; }
+        .dark .fdb-overview-header h2 { color: var(--gray-100); }
+        .fdb-overview-connection { font-size: 0.875rem; color: var(--gray-500); }
+        .fdb-overview-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
+        .fdb-stat-card { padding: 1.25rem; border-radius: 0.5rem; background: var(--gray-50); border: 1px solid var(--gray-200); }
+        .dark .fdb-stat-card { background: var(--gray-800); border-color: var(--gray-700); }
+        .fdb-stat-value { font-size: 2rem; font-weight: 700; color: var(--primary-600); margin-bottom: 0.25rem; }
+        .dark .fdb-stat-value { color: var(--primary-400); }
+        .fdb-stat-label { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--gray-500); }
+        .fdb-overview-section { margin-bottom: 2rem; }
+        .fdb-overview-section h3 { font-size: 1rem; font-weight: 600; color: var(--gray-900); margin-bottom: 0.75rem; }
+        .dark .fdb-overview-section h3 { color: var(--gray-100); }
 
         /* Data tables for structure/indexes/fkeys */
         .fdb-table-wrap { overflow-x: auto; border: 1px solid var(--gray-200); border-radius: 0.5rem; }
@@ -147,12 +165,61 @@
             @endif
         </div>
     @else
-        <div class="fdb-empty">
-            <div>
-                <x-heroicon-o-circle-stack />
-                <p>Select a table to get started</p>
+        @if($activeConnection && $this->isConnectionHealthy($activeConnection))
+            @php
+                $overview = $this->getDatabaseOverview($activeConnection);
+            @endphp
+            <div class="fdb-overview">
+                <div class="fdb-overview-header">
+                    <h2>Database Overview</h2>
+                    <div class="fdb-overview-connection">
+                        <strong>{{ $overview['database'] }}</strong> &middot; {{ ucfirst($overview['driver']) }}
+                    </div>
+                </div>
+
+                <div class="fdb-overview-stats">
+                    <div class="fdb-stat-card">
+                        <div class="fdb-stat-value">{{ number_format($overview['total_tables']) }}</div>
+                        <div class="fdb-stat-label">Total Tables</div>
+                    </div>
+                    <div class="fdb-stat-card">
+                        <div class="fdb-stat-value">{{ number_format($overview['total_rows']) }}</div>
+                        <div class="fdb-stat-label">Total Rows</div>
+                    </div>
+                </div>
+
+                @if(count($overview['largest_tables']) > 0)
+                    <div class="fdb-overview-section">
+                        <h3>Largest Tables</h3>
+                        <div class="fdb-table-wrap">
+                            <table class="fdb-table">
+                                <thead>
+                                    <tr>
+                                        <th>Table Name</th>
+                                        <th class="fdb-right">Rows</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach($overview['largest_tables'] as $table)
+                                        <tr wire:click="selectTable('{{ $table['name'] }}')" style="cursor: pointer;">
+                                            <td class="fdb-bold">{{ $table['name'] }}</td>
+                                            <td class="fdb-right">{{ number_format($table['rows']) }}</td>
+                                        </tr>
+                                    @endforeach
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                @endif
             </div>
-        </div>
+        @else
+            <div class="fdb-empty">
+                <div>
+                    <x-heroicon-o-circle-stack />
+                    <p>Select a table to get started</p>
+                </div>
+            </div>
+        @endif
     @endif
 
     @if($showCreateTable) @include('filament-database::pages.partials.create-table-modal') @endif
