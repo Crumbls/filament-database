@@ -12,3 +12,4 @@
 .env.backup
 .DS_Store
 Thumbs.db
+.phpunit.cache/
