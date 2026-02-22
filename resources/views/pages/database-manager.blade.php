@@ -1,4 +1,32 @@
 <x-filament-panels::page>
+    @script
+    <script>
+        // Copy to clipboard handler
+        document.addEventListener('livewire:initialized', () => {
+            Livewire.on('copy-to-clipboard', (event) => {
+                const text = event.text || event[0]?.text || '';
+                if (navigator.clipboard && window.isSecureContext) {
+                    navigator.clipboard.writeText(text);
+                } else {
+                    // Fallback for older browsers
+                    const textArea = document.createElement('textarea');
+                    textArea.value = text;
+                    textArea.style.position = 'fixed';
+                    textArea.style.left = '-999999px';
+                    document.body.appendChild(textArea);
+                    textArea.focus();
+                    textArea.select();
+                    try {
+                        document.execCommand('copy');
+                    } catch (err) {
+                        console.error('Failed to copy', err);
+                    }
+                    document.body.removeChild(textArea);
+                }
+            });
+        });
+    </script>
+    @endscript
     <style>
         .fdb-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; margin-bottom: 1.5rem; }
         .fdb-toolbar-field { width: 16rem; }
@@ -99,8 +127,8 @@
         @if($activeConnection && $this->isConnectionHealthy($activeConnection))
             @php
                 $allTables = $this->getFilteredTables($activeConnection);
-                $filteredTables = $tableSearch
-                    ? array_filter($allTables, fn($t) => stripos($t['name'], $tableSearch) !== false)
+                $filteredTables = $tableFilter
+                    ? array_filter($allTables, fn($t) => stripos($t['name'], $tableFilter) !== false)
                     : $allTables;
             @endphp
             <div class="fdb-toolbar-field" style="width: 20rem;">
@@ -108,7 +136,7 @@
                 <x-filament::input.wrapper>
                     <x-filament::input
                         type="text"
-                        wire:model.live.debounce.300ms="tableSearch"
+                        wire:model.live.debounce.300ms="tableFilter"
                         placeholder="Search tables..."
                         style="margin-bottom: 0.25rem;"
                     />
@@ -123,8 +151,8 @@
                             @endphp
                             <option value="{{ $table['name'] }}" @selected($activeTable === $table['name'])>{{ $displayName }}</option>
                         @endforeach
-                        @if(count($filteredTables) === 0 && $tableSearch)
-                            <option disabled>No tables match "{{ $tableSearch }}"</option>
+                        @if(count($filteredTables) === 0 && $tableFilter)
+                            <option disabled>No tables match "{{ $tableFilter }}"</option>
                         @endif
                     </x-filament::input.select>
                 </x-filament::input.wrapper>
@@ -143,7 +171,7 @@
         {{-- Tabs + danger actions --}}
         <x-filament::tabs>
             @php
-                $tabs = ['rows' => 'Rows', 'structure' => 'Structure', 'indexes' => 'Indexes', 'foreign-keys' => 'Foreign Keys'];
+                $tabs = ['rows' => 'Rows', 'structure' => 'Structure', 'indexes' => 'Indexes', 'foreign-keys' => 'Foreign Keys', 'relationships' => 'Relationships'];
                 if ($this->isQueryRunnerEnabled()) $tabs['sql'] = 'SQL';
             @endphp
             @foreach($tabs as $tab => $label)
@@ -160,6 +188,8 @@
                 @include('filament-database::pages.partials.indexes')
             @elseif($activeTab === 'foreign-keys')
                 @include('filament-database::pages.partials.foreign-keys')
+            @elseif($activeTab === 'relationships')
+                @include('filament-database::pages.partials.relationships')
             @elseif($activeTab === 'sql')
                 @include('filament-database::pages.partials.sql')
             @endif

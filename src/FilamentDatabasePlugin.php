@@ -43,6 +43,9 @@ class FilamentDatabasePlugin implements Plugin
     protected bool $logQueries = false;
     protected bool $logChanges = false;
 
+    // ─── Schema Snapshots ──────────────────────────────────────
+    protected ?string $schemaSnapshotPath = null;
+
     // ════════════════════════════════════════════════════════════
     // Factory
     // ════════════════════════════════════════════════════════════
@@ -355,6 +358,21 @@ class FilamentDatabasePlugin implements Plugin
     public function shouldLogChanges(): bool
     {
         return $this->logChanges;
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // Schema Snapshots
+    // ════════════════════════════════════════════════════════════
+
+    public function schemaSnapshotPath(?string $path): static
+    {
+        $this->schemaSnapshotPath = $path;
+        return $this;
+    }
+
+    public function getSchemaSnapshotPath(): string
+    {
+        return $this->schemaSnapshotPath ?? storage_path('app/filament-database/snapshots');
     }
 
     // ════════════════════════════════════════════════════════════

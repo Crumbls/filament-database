@@ -67,6 +67,12 @@ class DatabaseManager extends Page implements HasTable
     public bool $newColumnNullable = false;
     public string $newColumnDefault = '';
 
+    // Schema snapshots
+    public bool $showSchemaDiff = false;
+    public ?array $selectedSnapshot = null;
+    public ?array $schemaDiff = null;
+    public string $generatedMigration = '';
+
     // Legacy — kept for backwards compat but modals are now native Filament actions
 
     // ─── Navigation (from plugin config) ───────────────────────
@@ -420,6 +426,63 @@ class DatabaseManager extends Page implements HasTable
                 });
         }
 
+        // Copy Row As... action (always available, read-only safe)
+        if ($this->activeTable) {
+            $actions[] = ActionGroup::make([
+                Action::make('copy_as_php')
+                    ->label('PHP Array')
+                    ->icon('heroicon-m-code-bracket')
+                    ->action(function ($record) {
+                        $data = $record->getAttributes();
+                        $output = var_export($data, true);
+                        $this->dispatch('copy-to-clipboard', text: $output);
+                        Notification::make()->title('Copied as PHP array')->success()->send();
+                    }),
+                Action::make('copy_as_json')
+                    ->label('JSON')
+                    ->icon('heroicon-m-document-text')
+                    ->action(function ($record) {
+                        $data = $record->getAttributes();
+                        $output = json_encode($data, JSON_PRETTY_PRINT);
+                        $this->dispatch('copy-to-clipboard', text: $output);
+                        Notification::make()->title('Copied as JSON')->success()->send();
+                    }),
+                Action::make('copy_as_sql')
+                    ->label('SQL INSERT')
+                    ->icon('heroicon-m-command-line')
+                    ->action(function ($record) {
+                        $data = $record->getAttributes();
+                        $columns = implode(', ', array_map(fn($k) => "`{$k}`", array_keys($data)));
+                        $values = implode(', ', array_map(function($v) {
+                            if ($v === null) return 'NULL';
+                            if (is_numeric($v)) return $v;
+                            return "'" . addslashes($v) . "'";
+                        }, array_values($data)));
+                        $output = "INSERT INTO `{$this->activeTable}` ({$columns}) VALUES ({$values});";
+                        $this->dispatch('copy-to-clipboard', text: $output);
+                        Notification::make()->title('Copied as SQL INSERT')->success()->send();
+                    }),
+                Action::make('copy_as_factory')
+                    ->label('Laravel Factory')
+                    ->icon('heroicon-m-wrench-screwdriver')
+                    ->action(function ($record) {
+                        $data = $record->getAttributes();
+                        $lines = [];
+                        foreach ($data as $key => $value) {
+                            $valueStr = var_export($value, true);
+                            $lines[] = "    '{$key}' => {$valueStr},";
+                        }
+                        $output = implode("\n", $lines);
+                        $this->dispatch('copy-to-clipboard', text: $output);
+                        Notification::make()->title('Copied as factory format')->success()->send();
+                    }),
+            ])
+                ->label('Copy As')
+                ->icon('heroicon-m-clipboard-document')
+                ->color('gray')
+                ->button();
+        }
+
         if (!$plugin->isReadOnly() && $this->activeTable) {
             $dbColumns = $this->getColumns($this->activeTable, $this->activeConnection);
             $foreignKeys = $this->getForeignKeys($this->activeTable, $this->activeConnection);
@@ -569,12 +632,94 @@ class DatabaseManager extends Page implements HasTable
         $pageOptions = array_unique(array_filter([10, 25, 50, 100, $perPage], fn($n) => $n <= $maxPerPage));
         sort($pageOptions);
 
+        // Bulk actions
+        $bulkActions = [];
+
+        // Bulk Export (always available)
+        if ($this->activeTable) {
+            $bulkActions[] = BulkAction::make('bulk_export')
+                ->label('Export Selected')
+                ->icon('heroicon-m-arrow-down-tray')
+                ->form([
+                    Components\Select::make('format')
+                        ->label('Format')
+                        ->options([
+                            'csv' => 'CSV',
+                            'json' => 'JSON',
+                        ])
+                        ->default('csv')
+                        ->required(),
+                ])
+                ->action(function (Collection $records, array $data) {
+                    $rows = $records->map(fn($r) => $r->getAttributes())->toArray();
+                    $format = $data['format'];
+                    
+                    return ExportTable::make(
+                        $this->activeTable,
+                        $this->activeConnection,
+                        $format,
+                        false,
+                        $rows
+                    )->download();
+                })
+                ->deselectRecordsAfterCompletion();
+        }
+
+        // Bulk Delete (guarded)
+        if (!$plugin->isReadOnly() && !$plugin->isDestructivePrevented() && $this->activeTable) {
+            $bulkActions[] = BulkAction::make('bulk_delete')
+                ->label('Delete Selected')
+                ->icon('heroicon-m-trash')
+                ->color('danger')
+                ->requiresConfirmation()
+                ->modalHeading('Delete selected rows')
+                ->modalDescription('Are you sure you want to delete the selected rows? This cannot be undone.')
+                ->action(function (Collection $records) use ($plugin) {
+                    $count = 0;
+                    $errors = [];
+                    
+                    foreach ($records as $record) {
+                        try {
+                            $this->deleteRow($this->activeTable, $record->getAttributes(), $this->activeConnection);
+                            $count++;
+                        } catch (\Throwable $e) {
+                            $errors[] = $e->getMessage();
+                        }
+                    }
+
+                    if ($plugin->shouldLogChanges()) {
+                        Log::info('[filament-database] Bulk delete', [
+                            'user' => auth()->id(),
+                            'connection' => $this->activeConnection,
+                            'table' => $this->activeTable,
+                            'deleted' => $count,
+                            'errors' => count($errors),
+                        ]);
+                    }
+
+                    if (count($errors) > 0) {
+                        Notification::make()
+                            ->title("Deleted {$count} row(s)")
+                            ->body(count($errors) . ' error(s): ' . implode(', ', array_slice($errors, 0, 3)))
+                            ->warning()
+                            ->send();
+                    } else {
+                        Notification::make()
+                            ->title("Deleted {$count} row(s)")
+                            ->success()
+                            ->send();
+                    }
+                })
+                ->deselectRecordsAfterCompletion();
+        }
+
         return $table
             ->query(fn() => $this->getTableQuery())
             ->columns($columns)
             ->defaultPaginationPageOption($perPage)
             ->paginationPageOptions($pageOptions)
             ->actions($actions)
+            ->bulkActions($bulkActions)
             ->headerActions($headerActions)
             ->emptyStateHeading('No rows')
             ->emptyStateDescription('This table has no data.')
