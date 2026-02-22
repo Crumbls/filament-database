@@ -17,8 +17,8 @@ use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Table;
 use Filament\Tables\Columns\TextColumn;
-use Filament\Tables\Actions\BulkAction;
-use Filament\Tables\Actions\ActionGroup;
+use Filament\Actions\BulkAction;
+use Filament\Actions\ActionGroup;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
@@ -534,47 +534,49 @@ class DatabaseManager extends Page implements HasTable
                 });
         }
 
-        // Copy Row As... action (always available, read-only safe)
+        // Build row action items (will be grouped into single ActionGroup)
+        $rowActionItems = [];
+
+        // Copy Row As... actions (always available, read-only safe)
         if ($this->activeTable) {
-            $actions[] = ActionGroup::make([
-                Action::make('copy_as_php')
-                    ->label('PHP Array')
-                    ->icon('heroicon-m-code-bracket')
-                    ->action(function ($record) {
-                        $data = $record->getAttributes();
-                        $output = var_export($data, true);
-                        $this->dispatch('copy-to-clipboard', text: $output);
-                        Notification::make()->title('Copied as PHP array')->success()->send();
-                    }),
-                Action::make('copy_as_json')
-                    ->label('JSON')
-                    ->icon('heroicon-m-document-text')
-                    ->action(function ($record) {
-                        $data = $record->getAttributes();
-                        $output = json_encode($data, JSON_PRETTY_PRINT);
-                        $this->dispatch('copy-to-clipboard', text: $output);
-                        Notification::make()->title('Copied as JSON')->success()->send();
-                    }),
-                Action::make('copy_as_sql')
-                    ->label('SQL INSERT')
-                    ->icon('heroicon-m-command-line')
-                    ->action(function ($record) {
-                        $data = $record->getAttributes();
-                        $columns = implode(', ', array_map(fn($k) => "`{$k}`", array_keys($data)));
-                        $values = implode(', ', array_map(function($v) {
-                            if ($v === null) return 'NULL';
-                            if (is_numeric($v)) return $v;
-                            return "'" . addslashes($v) . "'";
-                        }, array_values($data)));
-                        $output = "INSERT INTO `{$this->activeTable}` ({$columns}) VALUES ({$values});";
-                        $this->dispatch('copy-to-clipboard', text: $output);
-                        Notification::make()->title('Copied as SQL INSERT')->success()->send();
-                    }),
-                Action::make('copy_as_factory')
-                    ->label('Laravel Factory')
-                    ->icon('heroicon-m-wrench-screwdriver')
-                    ->action(function ($record) {
-                        $data = $record->getAttributes();
+            $rowActionItems[] = Action::make('copy_as_php')
+                ->label('Copy as PHP Array')
+                ->icon('heroicon-m-code-bracket')
+                ->action(function ($record) {
+                    $data = $record->getAttributes();
+                    $output = var_export($data, true);
+                    $this->dispatch('copy-to-clipboard', text: $output);
+                    Notification::make()->title('Copied as PHP array')->success()->send();
+                });
+            $rowActionItems[] = Action::make('copy_as_json')
+                ->label('Copy as JSON')
+                ->icon('heroicon-m-document-text')
+                ->action(function ($record) {
+                    $data = $record->getAttributes();
+                    $output = json_encode($data, JSON_PRETTY_PRINT);
+                    $this->dispatch('copy-to-clipboard', text: $output);
+                    Notification::make()->title('Copied as JSON')->success()->send();
+                });
+            $rowActionItems[] = Action::make('copy_as_sql')
+                ->label('Copy as SQL INSERT')
+                ->icon('heroicon-m-command-line')
+                ->action(function ($record) {
+                    $data = $record->getAttributes();
+                    $columns = implode(', ', array_map(fn($k) => "`{$k}`", array_keys($data)));
+                    $values = implode(', ', array_map(function($v) {
+                        if ($v === null) return 'NULL';
+                        if (is_numeric($v)) return $v;
+                        return "'" . addslashes($v) . "'";
+                    }, array_values($data)));
+                    $output = "INSERT INTO `{$this->activeTable}` ({$columns}) VALUES ({$values});";
+                    $this->dispatch('copy-to-clipboard', text: $output);
+                    Notification::make()->title('Copied as SQL INSERT')->success()->send();
+                });
+            $rowActionItems[] = Action::make('copy_as_factory')
+                ->label('Copy as Laravel Factory')
+                ->icon('heroicon-m-wrench-screwdriver')
+                ->action(function ($record) {
+                    $data = $record->getAttributes();
                         $lines = [];
                         foreach ($data as $key => $value) {
                             $valueStr = var_export($value, true);
@@ -583,19 +585,16 @@ class DatabaseManager extends Page implements HasTable
                         $output = implode("\n", $lines);
                         $this->dispatch('copy-to-clipboard', text: $output);
                         Notification::make()->title('Copied as factory format')->success()->send();
-                    }),
-            ])
-                ->label('Copy As')
-                ->icon('heroicon-m-clipboard-document')
-                ->color('gray')
-                ->button();
+                    });
         }
 
+        // Edit & Delete row actions
         if (!$plugin->isReadOnly() && $this->activeTable) {
             $dbColumns = $this->getColumns($this->activeTable, $this->activeConnection);
             $foreignKeys = $this->getForeignKeys($this->activeTable, $this->activeConnection);
 
-            $actions[] = Action::make('edit')
+            $rowActionItems[] = Action::make('edit')
+                ->label('Edit Row')
                 ->icon('heroicon-m-pencil-square')
                 ->modalHeading('Edit Row')
                 ->form($this->buildFormFields($dbColumns, $foreignKeys, $this->activeConnection, false))
@@ -622,7 +621,8 @@ class DatabaseManager extends Page implements HasTable
                 });
 
             if (!$plugin->isDestructivePrevented()) {
-                $actions[] = Action::make('delete')
+                $rowActionItems[] = Action::make('delete')
+                    ->label('Delete Row')
                     ->icon('heroicon-m-trash')
                     ->color('danger')
                     ->requiresConfirmation()
@@ -647,6 +647,18 @@ class DatabaseManager extends Page implements HasTable
                         }
                     });
             }
+        }
+
+        // Combine all row actions into a single grouped dropdown
+        if (!empty($rowActionItems)) {
+            $actions[] = ActionGroup::make($rowActionItems)
+                ->icon('heroicon-m-ellipsis-vertical')
+                ->tooltip('Actions');
+        }
+
+        if (!$plugin->isReadOnly() && $this->activeTable) {
+            $dbColumns ??= $this->getColumns($this->activeTable, $this->activeConnection);
+            $foreignKeys ??= $this->getForeignKeys($this->activeTable, $this->activeConnection);
 
             $headerActions[] = Action::make('insert')
                 ->label('Insert Row')
