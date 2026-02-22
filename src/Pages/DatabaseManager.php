@@ -17,6 +17,9 @@ use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Table;
 use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Actions\BulkAction;
+use Filament\Tables\Actions\ActionGroup;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -43,11 +46,14 @@ class DatabaseManager extends Page implements HasTable
     public string $activeConnection = '';
     public string $activeTable = '';
     public string $activeTab = 'rows';
-    public string $tableSearch = '';
+    public string $tableFilter = '';
     public string $sqlQuery = '';
     public array $sqlResults = [];
     public string $sqlError = '';
     public array $sqlHistory = [];
+    public array $explainResults = [];
+    public string $explainFormat = 'table'; // 'table' or 'text'
+    public string $explainType = 'explain'; // 'explain' or 'analyze'
 
     // Create table
     public bool $showCreateTable = false;
@@ -961,6 +967,112 @@ class DatabaseManager extends Page implements HasTable
     {
         if (isset($this->sqlHistory[$index])) {
             $this->sqlQuery = $this->sqlHistory[$index]['query'];
+        }
+    }
+
+    public function explainSql(): void
+    {
+        $plugin = static::getPlugin();
+        $this->explainResults = [];
+        $this->sqlError = '';
+
+        if (!$plugin->isQueryRunnerEnabled()) {
+            $this->sqlError = 'SQL runner is disabled.';
+            return;
+        }
+
+        // Only allow EXPLAIN on SELECT queries
+        $trimmedQuery = trim($this->sqlQuery);
+        $upper = strtoupper(substr($trimmedQuery, 0, 6));
+        
+        if ($upper !== 'SELECT') {
+            Notification::make()
+                ->title('EXPLAIN only works with SELECT queries')
+                ->body('Please use a SELECT statement to run EXPLAIN.')
+                ->warning()
+                ->send();
+            return;
+        }
+
+        try {
+            $driver = $this->getDriverName($this->activeConnection);
+            
+            // Build the EXPLAIN query based on driver and type
+            switch ($driver) {
+                case 'mysql':
+                    if ($this->explainType === 'analyze') {
+                        // MySQL 8.0.18+ supports EXPLAIN ANALYZE
+                        $explainQuery = "EXPLAIN ANALYZE {$trimmedQuery}";
+                        $this->explainFormat = 'text';
+                    } else {
+                        $explainQuery = "EXPLAIN {$trimmedQuery}";
+                        $this->explainFormat = 'table';
+                    }
+                    break;
+
+                case 'pgsql':
+                    if ($this->explainType === 'analyze') {
+                        $explainQuery = "EXPLAIN ANALYZE {$trimmedQuery}";
+                        $this->explainFormat = 'text';
+                    } else {
+                        $explainQuery = "EXPLAIN {$trimmedQuery}";
+                        $this->explainFormat = 'text';
+                    }
+                    break;
+
+                case 'sqlite':
+                    // SQLite only has EXPLAIN QUERY PLAN (no ANALYZE option)
+                    $explainQuery = "EXPLAIN QUERY PLAN {$trimmedQuery}";
+                    $this->explainFormat = 'table';
+                    break;
+
+                default:
+                    $this->sqlError = "EXPLAIN is not supported for driver: {$driver}";
+                    return;
+            }
+
+            if ($plugin->shouldLogQueries()) {
+                Log::info('[filament-database] EXPLAIN executed', [
+                    'user' => auth()->id(),
+                    'connection' => $this->activeConnection,
+                    'query' => $explainQuery,
+                ]);
+            }
+
+            $results = $this->runQuery($explainQuery, $this->activeConnection);
+            
+            // For PostgreSQL EXPLAIN output, convert to text format
+            if ($driver === 'pgsql' && $this->explainFormat === 'text') {
+                $textResults = [];
+                foreach ($results as $row) {
+                    $row = (array) $row;
+                    $textResults[] = $row['QUERY PLAN'] ?? reset($row);
+                }
+                $this->explainResults = $textResults;
+            } else {
+                // For MySQL EXPLAIN ANALYZE (text output)
+                if ($driver === 'mysql' && $this->explainType === 'analyze' && isset($results[0])) {
+                    $row = (array) $results[0];
+                    $this->explainResults = [reset($row)];
+                } else {
+                    // Table format for MySQL EXPLAIN and SQLite EXPLAIN QUERY PLAN
+                    $this->explainResults = array_map(fn($r) => (array) $r, $results);
+                }
+            }
+
+            Notification::make()
+                ->title('Query explained successfully')
+                ->success()
+                ->send();
+
+        } catch (\Throwable $e) {
+            $this->sqlError = $e->getMessage();
+            
+            Notification::make()
+                ->title('EXPLAIN failed')
+                ->body($e->getMessage())
+                ->danger()
+                ->send();
         }
     }
 
