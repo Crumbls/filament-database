@@ -1,0 +1,48 @@
+{
+    "name": "crumbls/filament-database",
+    "description": "A database management panel for Laravel Filament — like phpMyAdmin, built into your admin.",
+    "keywords": ["laravel", "filament", "database", "phpmyadmin", "mysql", "sqlite", "postgres", "admin"],
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Chase Miller",
+            "email": "chase@crumbls.com"
+        }
+    ],
+    "require": {
+        "php": "^8.2",
+        "laravel/framework": "^12.0",
+        "filament/filament": "^4.0 || ^5.0"
+    },
+    "require-dev": {
+        "pestphp/pest": "^3.0",
+        "pestphp/pest-plugin-livewire": "^3.0",
+        "pestphp/pest-plugin-type-coverage": "^3.0",
+        "orchestra/testbench": "^10.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Crumbls\\FilamentDatabase\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Crumbls\\FilamentDatabase\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Crumbls\\FilamentDatabase\\FilamentDatabaseServiceProvider"
+            ]
+        }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true,
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    }
+}
