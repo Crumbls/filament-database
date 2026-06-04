@@ -172,6 +172,11 @@ class DatabaseManager extends Page implements HasTable
             return;
         }
 
+        if (!static::getPlugin()->isConnectionValid($connection)) {
+            Notification::make()->title('Connection not allowed.')->danger()->send();
+            return;
+        }
+
         $this->activeConnection = $connection;
         $this->activeTable = '';
         $this->resetTable();
@@ -411,9 +416,17 @@ class DatabaseManager extends Page implements HasTable
                 ->action(function (array $data) use ($plugin) {
                     try {
                         $snapshotPath = $plugin->getSchemaSnapshotPath();
-                        $filepath = $snapshotPath . '/' . $data['snapshot_file'];
+                        $snapshotFile = basename($data['snapshot_file']);
+                        $filepath = $snapshotPath . '/' . $snapshotFile;
 
-                        if (!file_exists($filepath)) {
+                        $realFilepath = realpath($filepath);
+                        $realSnapshotPath = realpath($snapshotPath);
+
+                        if (
+                            !$realFilepath ||
+                            !$realSnapshotPath ||
+                            !str_starts_with($realFilepath, $realSnapshotPath . DIRECTORY_SEPARATOR)
+                        ) {
                             throw new \Exception('Snapshot file not found');
                         }
 
@@ -602,7 +615,15 @@ class DatabaseManager extends Page implements HasTable
                 ->action(function (array $data, $record) use ($plugin) {
                     try {
                         $data = $this->processNullCheckboxes($data);
-                        $this->updateRow($this->activeTable, $record->getAttributes(), $data, $this->activeConnection);
+                        $primaryKey = $this->detectPrimaryKey($this->activeTable, $this->activeConnection);
+                        $attrs = $record->getAttributes();
+                        $where = ($primaryKey && isset($attrs[$primaryKey]))
+                            ? [$primaryKey => $attrs[$primaryKey]]
+                            : $attrs;
+                        if ($primaryKey) {
+                            unset($data[$primaryKey]);
+                        }
+                        $this->updateRow($this->activeTable, $where, $data, $this->activeConnection);
 
                         if ($plugin->shouldLogChanges()) {
                             Log::info('[filament-database] Row updated', [
@@ -630,7 +651,12 @@ class DatabaseManager extends Page implements HasTable
                     ->modalDescription('Are you sure you want to delete this row? This cannot be undone.')
                     ->action(function ($record) use ($plugin) {
                         try {
-                            $this->deleteRow($this->activeTable, $record->getAttributes(), $this->activeConnection);
+                            $primaryKey = $this->detectPrimaryKey($this->activeTable, $this->activeConnection);
+                            $attrs = $record->getAttributes();
+                            $where = ($primaryKey && isset($attrs[$primaryKey]))
+                                ? [$primaryKey => $attrs[$primaryKey]]
+                                : $attrs;
+                            $this->deleteRow($this->activeTable, $where, $this->activeConnection);
 
                             if ($plugin->shouldLogChanges()) {
                                 Log::info('[filament-database] Row deleted', [
@@ -797,10 +823,15 @@ class DatabaseManager extends Page implements HasTable
                 ->action(function (Collection $records) use ($plugin) {
                     $count = 0;
                     $errors = [];
-                    
+                    $primaryKey = $this->detectPrimaryKey($this->activeTable, $this->activeConnection);
+
                     foreach ($records as $record) {
                         try {
-                            $this->deleteRow($this->activeTable, $record->getAttributes(), $this->activeConnection);
+                            $attrs = $record->getAttributes();
+                            $where = ($primaryKey && isset($attrs[$primaryKey]))
+                                ? [$primaryKey => $attrs[$primaryKey]]
+                                : $attrs;
+                            $this->deleteRow($this->activeTable, $where, $this->activeConnection);
                             $count++;
                         } catch (\Throwable $e) {
                             $errors[] = $e->getMessage();
@@ -1179,8 +1210,11 @@ class DatabaseManager extends Page implements HasTable
             return;
         }
 
-        $upper = strtoupper(trim(substr($this->sqlQuery, 0, 6)));
-        $isRead = in_array($upper, ['SELECT', 'SHOW  ', 'DESCRI', 'EXPLAI']);
+        $normalized = strtoupper(trim($this->sqlQuery));
+        $isRead = str_starts_with($normalized, 'SELECT') ||
+            str_starts_with($normalized, 'SHOW ') ||
+            str_starts_with($normalized, 'DESCRIBE ') ||
+            str_starts_with($normalized, 'EXPLAIN ');
 
         if ($plugin->isQueryRunnerReadOnly() && !$isRead) {
             $this->sqlError = 'SQL runner is in read-only mode: only SELECT queries are allowed.';

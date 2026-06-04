@@ -9,9 +9,9 @@ use Illuminate\Support\Facades\Gate;
 
 describe('Access Control', function () {
 
-    it('allows access by default with no gate', function () {
+    it('denies access by default with no authorization configured', function () {
         $plugin = new FilamentDatabasePlugin();
-        expect($plugin->canAccess())->toBeTrue();
+        expect($plugin->canAccess())->toBeFalse();
     });
 
     it('restricts access with authorize closure - denied', function () {

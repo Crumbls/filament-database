@@ -95,30 +95,38 @@ class ImportTable
         $this->errorCount = 0;
         $this->errors = [];
 
+        $mapped = [];
         foreach ($this->csvData as $rowIndex => $row) {
-            try {
-                $data = [];
-
-                foreach ($columnMapping as $csvIndex => $tableColumn) {
-                    if ($tableColumn && isset($row[$csvIndex])) {
-                        $value = $row[$csvIndex];
-                        // Convert empty strings to NULL
-                        $data[$tableColumn] = $value === '' ? null : $value;
-                    }
+            $data = [];
+            foreach ($columnMapping as $csvIndex => $tableColumn) {
+                if ($tableColumn && isset($row[$csvIndex])) {
+                    $data[$tableColumn] = $row[$csvIndex] === '' ? null : $row[$csvIndex];
                 }
-
-                if (!empty($data)) {
-                    DB::connection($this->connection)
-                        ->table($this->table)
-                        ->insert($data);
-
-                    $this->successCount++;
-                }
-            } catch (\Throwable $e) {
-                $this->errorCount++;
-                $this->errors[] = "Row {$rowIndex}: " . $e->getMessage();
+            }
+            if (!empty($data)) {
+                $mapped[] = ['index' => $rowIndex, 'data' => $data];
             }
         }
+
+        DB::connection($this->connection)->transaction(function () use ($mapped) {
+            foreach (array_chunk($mapped, 500) as $chunk) {
+                $batch = array_column($chunk, 'data');
+                try {
+                    DB::connection($this->connection)->table($this->table)->insert($batch);
+                    $this->successCount += count($batch);
+                } catch (\Throwable) {
+                    foreach ($chunk as $item) {
+                        try {
+                            DB::connection($this->connection)->table($this->table)->insert($item['data']);
+                            $this->successCount++;
+                        } catch (\Throwable $e) {
+                            $this->errorCount++;
+                            $this->errors[] = "Row {$item['index']}: " . $e->getMessage();
+                        }
+                    }
+                }
+            }
+        });
 
         return [
             'success' => $this->successCount,

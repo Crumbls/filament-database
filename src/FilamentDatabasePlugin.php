@@ -103,7 +103,7 @@ class FilamentDatabasePlugin implements Plugin
             return $user && in_array(strtolower($user->email ?? ''), $this->allowedEmails);
         }
 
-        return true;
+        return false;
     }
 
     // ════════════════════════════════════════════════════════════
@@ -246,10 +246,6 @@ class FilamentDatabasePlugin implements Plugin
 
     public function isQueryRunnerEnabled(): bool
     {
-        if ($this->readOnly && !$this->queryRunnerReadOnly) {
-            // In read-only mode, runner is still enabled but restricted
-            return $this->queryRunnerEnabled;
-        }
         return $this->queryRunnerEnabled;
     }
 

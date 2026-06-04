@@ -84,9 +84,14 @@ trait InteractsWithDatabase
     public function runQuery(string $sql, ?string $connection = null): array
     {
         $sql = trim($sql);
-        $upper = strtoupper(substr($sql, 0, 6));
+        $normalized = strtoupper($sql);
 
-        if (in_array($upper, ['SELECT', 'SHOW  ', 'DESCRI', 'EXPLAI'])) {
+        if (
+            str_starts_with($normalized, 'SELECT') ||
+            str_starts_with($normalized, 'SHOW ') ||
+            str_starts_with($normalized, 'DESCRIBE ') ||
+            str_starts_with($normalized, 'EXPLAIN ')
+        ) {
             return DB::connection($connection)->select($sql);
         }
 
@@ -113,8 +118,21 @@ trait InteractsWithDatabase
         $this->getSchemaBuilder($connection)->dropColumns($table, [$column]);
     }
 
+    protected static array $allowedColumnTypes = [
+        'id', 'bigIncrements', 'bigInteger', 'binary', 'boolean',
+        'char', 'date', 'dateTime', 'decimal', 'double',
+        'enum', 'float', 'increments', 'integer', 'json',
+        'jsonb', 'longText', 'mediumInteger', 'mediumText',
+        'smallInteger', 'string', 'text', 'time', 'timestamp',
+        'tinyInteger', 'unsignedBigInteger', 'unsignedInteger', 'uuid',
+    ];
+
     public function addColumn(string $table, string $name, string $type, array $options = [], ?string $connection = null): void
     {
+        if (!in_array($type, static::$allowedColumnTypes, true)) {
+            throw new \InvalidArgumentException("Invalid column type: {$type}");
+        }
+
         $this->getSchemaBuilder($connection)->table($table, function ($blueprint) use ($name, $type, $options) {
             $col = $blueprint->{$type}($name, ...($options['arguments'] ?? []));
 
@@ -139,6 +157,10 @@ trait InteractsWithDatabase
 
     public function modifyColumn(string $table, string $name, string $type, array $options, ?string $connection = null): void
     {
+        if (!in_array($type, static::$allowedColumnTypes, true)) {
+            throw new \InvalidArgumentException("Invalid column type: {$type}");
+        }
+
         $this->getSchemaBuilder($connection)->table($table, function ($blueprint) use ($name, $type, $options) {
             $col = $blueprint->{$type}($name, ...($options['arguments'] ?? []))->change();
 
@@ -158,6 +180,10 @@ trait InteractsWithDatabase
     {
         $this->getSchemaBuilder($connection)->create($name, function ($blueprint) use ($columns) {
             foreach ($columns as $col) {
+                if (!in_array($col['type'], static::$allowedColumnTypes, true)) {
+                    throw new \InvalidArgumentException("Invalid column type: {$col['type']}");
+                }
+
                 $column = $blueprint->{$col['type']}($col['name'], ...($col['arguments'] ?? []));
                 if ($col['nullable'] ?? false) {
                     $column->nullable();
@@ -187,18 +213,41 @@ trait InteractsWithDatabase
 
         // Incoming: Other tables that reference this table
         $referencedBy = [];
-        $allTables = $this->getTables($connection);
+        $driver = $this->getDriverName($connection);
 
-        foreach ($allTables as $tableInfo) {
-            $otherTable = $tableInfo['name'];
-            if ($otherTable === $table) {
-                continue;
+        if ($driver === 'mysql') {
+            $database = DB::connection($connection)->getDatabaseName();
+            $rows = DB::connection($connection)
+                ->table('information_schema.KEY_COLUMN_USAGE')
+                ->select(['TABLE_NAME', 'COLUMN_NAME', 'CONSTRAINT_NAME', 'REFERENCED_COLUMN_NAME'])
+                ->where('CONSTRAINT_SCHEMA', $database)
+                ->where('REFERENCED_TABLE_SCHEMA', $database)
+                ->where('REFERENCED_TABLE_NAME', $table)
+                ->get();
+
+            foreach ($rows as $row) {
+                $referencedBy[] = [
+                    'table'           => $row->TABLE_NAME,
+                    'columns'         => [$row->COLUMN_NAME],
+                    'foreign_table'   => $table,
+                    'foreign_columns' => [$row->REFERENCED_COLUMN_NAME],
+                    'name'            => $row->CONSTRAINT_NAME,
+                ];
             }
+        } else {
+            $allTables = $this->getTables($connection);
 
-            $foreignKeys = $this->getForeignKeys($otherTable, $connection);
-            foreach ($foreignKeys as $fk) {
-                if (($fk['foreign_table'] ?? null) === $table) {
-                    $referencedBy[] = array_merge($fk, ['table' => $otherTable]);
+            foreach ($allTables as $tableInfo) {
+                $otherTable = $tableInfo['name'];
+                if ($otherTable === $table) {
+                    continue;
+                }
+
+                $foreignKeys = $this->getForeignKeys($otherTable, $connection);
+                foreach ($foreignKeys as $fk) {
+                    if (($fk['foreign_table'] ?? null) === $table) {
+                        $referencedBy[] = array_merge($fk, ['table' => $otherTable]);
+                    }
                 }
             }
         }

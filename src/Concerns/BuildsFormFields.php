@@ -158,7 +158,7 @@ trait BuildsFormFields
                     ->label("Set {$name} to NULL")
                     ->helperText('Check this to explicitly set NULL instead of empty string')
                     ->live()
-                    ->afterStateUpdated(function ($state, Components\Forms\Set $set) use ($name) {
+                    ->afterStateUpdated(function ($state, Set $set) use ($name) {
                         if ($state) {
                             $set($name, null);
                         }

@@ -1,8 +1,15 @@
-# Filament Database
+# Filament Database Administration
 
 A phpMyAdmin-style database manager for [Laravel Filament](https://filamentphp.com). Browse tables, edit rows, manage schema, run SQL — all from your Filament admin panel.
 
-Supports **SQLite**, **MySQL**, and **PostgreSQL**.
+| Requirement | Minimum Version |
+|-------------|-----------------|
+| PHP | 8.3 |
+| Laravel | 12.0 – 13.x |
+| Filament | 4.0 |
+| MySQL | 5.7 |
+| PostgreSQL | 13.0 |
+| SQLite | 3.35 |
 
 ## Screenshots
 
@@ -11,12 +18,6 @@ Supports **SQLite**, **MySQL**, and **PostgreSQL**.
 
 ### Table Browser
 ![Table Browser](docs/screenshots/table-browser.png)
-
-## Requirements
-
-- PHP 8.2+
-- Laravel 12+
-- Filament 4+ (5 recommended)
 
 ## Installation
 
@@ -113,13 +114,35 @@ FilamentDatabasePlugin::make()
 
 ## Security
 
-⚠️ This package gives direct database access. Protect it:
+This package gives direct database access. **Access is denied to all users by default** — you must explicitly grant access via one of the authorization methods below.
 
-- Use `authorize()` or `onlyForEmails()` to restrict access
-- Enable `readOnly()` in production
-- Use `preventDestructive()` to block DROP/TRUNCATE
-- Restrict `connections()` to what's needed
-- Enable `logQueries()` and `logChanges()` for audit trails
+### Authorization (required)
+
+```php
+// Closure — full control
+FilamentDatabasePlugin::make()
+    ->authorize(fn () => auth()->user()->is_admin)
+
+// Laravel Gate
+FilamentDatabasePlugin::make()
+    ->authorizeUsing('manage-database')
+
+// Email allowlist
+FilamentDatabasePlugin::make()
+    ->onlyForEmails(['admin@example.com'])
+```
+
+### Recommended production settings
+
+```php
+FilamentDatabasePlugin::make()
+    ->authorize(fn () => auth()->user()->is_admin)
+    ->readOnly()                          // block all writes
+    ->preventDestructive()                // block DROP / TRUNCATE
+    ->connections(['mysql'])              // limit to specific connections
+    ->logQueries()                        // audit all SQL
+    ->logChanges()                        // audit all data changes
+```
 
 ## Testing
 
