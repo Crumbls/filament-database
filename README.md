@@ -4,12 +4,9 @@ A phpMyAdmin-style database manager for [Laravel Filament](https://filamentphp.c
 
 | Requirement | Minimum Version |
 |-------------|-----------------|
-| PHP | 8.3 |
-| Laravel | 12.0 – 13.x |
-| Filament | 4.0 |
-| MySQL | 5.7 |
-| PostgreSQL | 13.0 |
-| SQLite | 3.35 |
+| PHP | 8.3             |
+| Laravel | 12.0 – 13.x     |
+| Filament | 5.0             |
 
 ## Screenshots
 
@@ -37,7 +34,11 @@ public function panel(Panel $panel): Panel
     return $panel
         // ...
         ->plugins([
-            FilamentDatabasePlugin::make(),
+            FilamentDatabasePlugin::make()
+                ->authorize(function() { 
+                    // You need to customize this. It controls who can view it.
+                    return false; 
+                }),
         ]);
 }
 ```
