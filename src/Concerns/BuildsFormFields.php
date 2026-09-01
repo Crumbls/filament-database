@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Crumbls\FilamentDatabase\Concerns;
 
 use Filament\Forms\Components;
@@ -171,6 +173,8 @@ trait BuildsFormFields
 
     protected function getForeignKeyOptions(string $table, string $keyColumn, string $connection): array
     {
+        $this->authorizeDatabaseTable($table, $connection);
+
         try {
             $rows = DB::connection($connection)
                 ->table($table)

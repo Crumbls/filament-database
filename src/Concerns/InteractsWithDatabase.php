@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Crumbls\FilamentDatabase\Concerns;
 
 use Crumbls\FilamentDatabase\FilamentDatabasePlugin;
@@ -8,6 +10,24 @@ use Illuminate\Support\Facades\Schema;
 
 trait InteractsWithDatabase
 {
+    protected function canAccessDatabaseTable(string $table, ?string $connection): bool
+    {
+        return true;
+    }
+
+    protected function authorizeDatabaseConnection(?string $connection): void
+    {
+        // Components may override this hook to enforce their access boundary.
+    }
+
+    protected function authorizeDatabaseTable(
+        string $table,
+        ?string $connection,
+        bool $mustExist = true,
+    ): void {
+        $this->authorizeDatabaseConnection($connection);
+    }
+
     public function getAvailableConnections(): array
     {
         $all = array_keys(config('database.connections', []));
@@ -23,36 +43,58 @@ trait InteractsWithDatabase
 
     public function getSchemaBuilder(?string $connection = null): \Illuminate\Database\Schema\Builder
     {
+        $this->authorizeDatabaseConnection($connection);
+
         return Schema::connection($connection);
     }
 
     public function getTables(?string $connection = null): array
     {
-        return $this->getSchemaBuilder($connection)->getTables();
+        return array_values(array_filter(
+            $this->getSchemaBuilder($connection)->getTables(),
+            fn (array $table): bool => $this->canAccessDatabaseTable(
+                $table['name'],
+                $connection,
+            ),
+        ));
     }
 
     public function getColumns(string $table, ?string $connection = null): array
     {
+        $this->authorizeDatabaseTable($table, $connection);
+
         return $this->getSchemaBuilder($connection)->getColumns($table);
     }
 
     public function getIndexes(string $table, ?string $connection = null): array
     {
+        $this->authorizeDatabaseTable($table, $connection);
+
         return $this->getSchemaBuilder($connection)->getIndexes($table);
     }
 
     public function getForeignKeys(string $table, ?string $connection = null): array
     {
-        return $this->getSchemaBuilder($connection)->getForeignKeys($table);
+        $this->authorizeDatabaseTable($table, $connection);
+
+        return array_values(array_filter(
+            $this->getSchemaBuilder($connection)->getForeignKeys($table),
+            fn (array $foreignKey): bool => ! isset($foreignKey['foreign_table'])
+                || $this->canAccessDatabaseTable($foreignKey['foreign_table'], $connection),
+        ));
     }
 
     public function getDriverName(?string $connection = null): string
     {
+        $this->authorizeDatabaseConnection($connection);
+
         return DB::connection($connection)->getDriverName();
     }
 
     public function getRows(string $table, ?string $connection = null, int $page = 1, int $perPage = 25): \Illuminate\Contracts\Pagination\LengthAwarePaginator
     {
+        $this->authorizeDatabaseTable($table, $connection);
+
         return DB::connection($connection)
             ->table($table)
             ->paginate($perPage, ['*'], 'page', $page);
@@ -60,11 +102,15 @@ trait InteractsWithDatabase
 
     public function insertRow(string $table, array $data, ?string $connection = null): bool
     {
+        $this->authorizeDatabaseTable($table, $connection);
+
         return DB::connection($connection)->table($table)->insert($data);
     }
 
     public function updateRow(string $table, array $where, array $data, ?string $connection = null): int
     {
+        $this->authorizeDatabaseTable($table, $connection);
+
         $query = DB::connection($connection)->table($table);
         foreach ($where as $col => $val) {
             $query->where($col, $val);
@@ -74,6 +120,8 @@ trait InteractsWithDatabase
 
     public function deleteRow(string $table, array $where, ?string $connection = null): int
     {
+        $this->authorizeDatabaseTable($table, $connection);
+
         $query = DB::connection($connection)->table($table);
         foreach ($where as $col => $val) {
             $query->where($col, $val);
@@ -83,6 +131,8 @@ trait InteractsWithDatabase
 
     public function runQuery(string $sql, ?string $connection = null): array
     {
+        $this->authorizeDatabaseConnection($connection);
+
         $sql = trim($sql);
         $normalized = strtoupper($sql);
 
@@ -100,21 +150,30 @@ trait InteractsWithDatabase
 
     public function dropTable(string $table, ?string $connection = null): void
     {
+        $this->authorizeDatabaseTable($table, $connection);
+
         $this->getSchemaBuilder($connection)->drop($table);
     }
 
     public function truncateTable(string $table, ?string $connection = null): void
     {
+        $this->authorizeDatabaseTable($table, $connection);
+
         DB::connection($connection)->table($table)->truncate();
     }
 
     public function renameTable(string $from, string $to, ?string $connection = null): void
     {
+        $this->authorizeDatabaseTable($from, $connection);
+        $this->authorizeDatabaseTable($to, $connection, mustExist: false);
+
         $this->getSchemaBuilder($connection)->rename($from, $to);
     }
 
     public function dropColumn(string $table, string $column, ?string $connection = null): void
     {
+        $this->authorizeDatabaseTable($table, $connection);
+
         $this->getSchemaBuilder($connection)->dropColumns($table, [$column]);
     }
 
@@ -129,6 +188,8 @@ trait InteractsWithDatabase
 
     public function addColumn(string $table, string $name, string $type, array $options = [], ?string $connection = null): void
     {
+        $this->authorizeDatabaseTable($table, $connection);
+
         if (!in_array($type, static::$allowedColumnTypes, true)) {
             throw new \InvalidArgumentException("Invalid column type: {$type}");
         }
@@ -150,6 +211,8 @@ trait InteractsWithDatabase
 
     public function renameColumn(string $table, string $from, string $to, ?string $connection = null): void
     {
+        $this->authorizeDatabaseTable($table, $connection);
+
         $this->getSchemaBuilder($connection)->table($table, function ($blueprint) use ($from, $to) {
             $blueprint->renameColumn($from, $to);
         });
@@ -157,6 +220,8 @@ trait InteractsWithDatabase
 
     public function modifyColumn(string $table, string $name, string $type, array $options, ?string $connection = null): void
     {
+        $this->authorizeDatabaseTable($table, $connection);
+
         if (!in_array($type, static::$allowedColumnTypes, true)) {
             throw new \InvalidArgumentException("Invalid column type: {$type}");
         }
@@ -178,6 +243,8 @@ trait InteractsWithDatabase
 
     public function createTable(string $name, array $columns, ?string $connection = null): void
     {
+        $this->authorizeDatabaseTable($name, $connection, mustExist: false);
+
         $this->getSchemaBuilder($connection)->create($name, function ($blueprint) use ($columns) {
             foreach ($columns as $col) {
                 if (!in_array($col['type'], static::$allowedColumnTypes, true)) {
@@ -208,6 +275,8 @@ trait InteractsWithDatabase
      */
     public function getTableRelationships(string $table, ?string $connection = null): array
     {
+        $this->authorizeDatabaseTable($table, $connection);
+
         // Outgoing: This table's foreign keys (references TO other tables)
         $references = $this->getForeignKeys($table, $connection);
 
@@ -226,6 +295,10 @@ trait InteractsWithDatabase
                 ->get();
 
             foreach ($rows as $row) {
+                if (! $this->canAccessDatabaseTable($row->TABLE_NAME, $connection)) {
+                    continue;
+                }
+
                 $referencedBy[] = [
                     'table'           => $row->TABLE_NAME,
                     'columns'         => [$row->COLUMN_NAME],

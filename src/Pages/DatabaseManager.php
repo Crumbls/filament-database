@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Crumbls\FilamentDatabase\Pages;
 
 use BackedEnum;
@@ -19,11 +21,13 @@ use Filament\Tables\Table;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Actions\BulkAction;
 use Filament\Actions\ActionGroup;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Livewire\Attributes\Locked;
 use UnitEnum;
 
 class DatabaseManager extends Page implements HasTable
@@ -39,12 +43,15 @@ class DatabaseManager extends Page implements HasTable
     protected static ?string $slug = 'database';
     protected string $view = 'filament-database::pages.database-manager';
 
-    // Connection health cache: connection => true|string(error)
+    #[Locked]
     public array $connectionHealth = [];
 
-    // State
+    #[Locked]
     public string $activeConnection = '';
+
+    #[Locked]
     public string $activeTable = '';
+
     public string $activeTab = 'rows';
     public string $tableFilter = '';
     public string $sqlQuery = '';
@@ -112,6 +119,42 @@ class DatabaseManager extends Page implements HasTable
         return static::getPlugin()->canAccess();
     }
 
+    protected function authorizeDatabaseConnection(?string $connection): void
+    {
+        $connection ??= $this->activeConnection;
+
+        if (
+            $connection === ''
+            || ! static::canAccess()
+            || ! static::getPlugin()->isConnectionValid($connection)
+        ) {
+            throw new AuthorizationException('Database connection access denied.');
+        }
+    }
+
+    protected function canAccessDatabaseTable(string $table, ?string $connection): bool
+    {
+        return static::getPlugin()->isTableVisible($table);
+    }
+
+    protected function authorizeDatabaseTable(
+        string $table,
+        ?string $connection,
+        bool $mustExist = true,
+    ): void {
+        $connection ??= $this->activeConnection;
+
+        $this->authorizeDatabaseConnection($connection);
+
+        if (! $this->canAccessDatabaseTable($table, $connection)) {
+            throw new AuthorizationException('Database table access denied.');
+        }
+
+        if ($mustExist && ! Schema::connection($connection)->hasTable($table)) {
+            throw new AuthorizationException('Database table access denied.');
+        }
+    }
+
     // ─── Lifecycle ─────────────────────────────────────────────
 
     public function mount(): void
@@ -163,17 +206,18 @@ class DatabaseManager extends Page implements HasTable
 
     public function switchConnection(string $connection): void
     {
-        if (!$this->isConnectionHealthy($connection)) {
+        if (! static::getPlugin()->isConnectionValid($connection)) {
+            Notification::make()->title('Connection not allowed.')->danger()->send();
+
+            return;
+        }
+
+        if (! $this->isConnectionHealthy($connection)) {
             Notification::make()
                 ->title("Connection '{$connection}' is not available")
                 ->body($this->getConnectionError($connection))
                 ->danger()
                 ->send();
-            return;
-        }
-
-        if (!static::getPlugin()->isConnectionValid($connection)) {
-            Notification::make()->title('Connection not allowed.')->danger()->send();
             return;
         }
 
@@ -184,12 +228,7 @@ class DatabaseManager extends Page implements HasTable
 
     public function selectTable(string $table): void
     {
-        $plugin = static::getPlugin();
-
-        if (!$plugin->isTableVisible($table)) {
-            Notification::make()->title('Access denied.')->danger()->send();
-            return;
-        }
+        $this->authorizeDatabaseTable($table, $this->activeConnection);
 
         $this->activeTable = $table;
         $this->activeTab = 'rows';
@@ -214,6 +253,8 @@ class DatabaseManager extends Page implements HasTable
     public function getDatabaseOverview(?string $connection = null): array
     {
         $conn = $connection ?? $this->activeConnection;
+        $this->authorizeDatabaseConnection($conn);
+
         $tables = $this->getFilteredTables($conn);
         
         $totalTables = count($tables);
@@ -250,6 +291,9 @@ class DatabaseManager extends Page implements HasTable
      */
     public function getFilteredTables(?string $connection = null): array
     {
+        $connection ??= $this->activeConnection;
+        $this->authorizeDatabaseConnection($connection);
+
         $plugin = static::getPlugin();
         $tables = $this->getTables($connection);
         $tables = array_filter($tables, fn($t) => $plugin->isTableVisible($t['name']));
@@ -927,6 +971,8 @@ class DatabaseManager extends Page implements HasTable
 
     public function confirmDropTable(string $table): void
     {
+        $this->authorizeDatabaseTable($table, $this->activeConnection);
+
         $plugin = static::getPlugin();
 
         if ($plugin->isReadOnly() || $plugin->isDestructivePrevented()) {
@@ -956,6 +1002,8 @@ class DatabaseManager extends Page implements HasTable
 
     public function confirmTruncateTable(string $table): void
     {
+        $this->authorizeDatabaseTable($table, $this->activeConnection);
+
         $plugin = static::getPlugin();
 
         if ($plugin->isReadOnly() || $plugin->isDestructivePrevented()) {
