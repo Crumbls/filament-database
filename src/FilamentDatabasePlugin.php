@@ -6,6 +6,7 @@ namespace Crumbls\FilamentDatabase;
 
 use Closure;
 use Crumbls\FilamentDatabase\Pages\DatabaseManager;
+use Crumbls\FilamentDatabase\Support\DatabaseLog;
 use Filament\Contracts\Plugin;
 use Filament\Panel;
 use Illuminate\Support\Facades\Gate;
@@ -156,15 +157,17 @@ class FilamentDatabasePlugin implements Plugin
     }
 
     /**
-     * Test if a connection is reachable. Returns true or an error message.
+     * Test if a connection is reachable. Returns true or a safe reference message.
      */
     public function testConnection(string $connection): true|string
     {
         try {
             \Illuminate\Support\Facades\DB::connection($connection)->getPdo();
             return true;
-        } catch (\Throwable $e) {
-            return $e->getMessage();
+        } catch (\Throwable $exception) {
+            return DatabaseLog::failure('connection_test', $exception, [
+                'connection' => $connection,
+            ]);
         }
     }
 

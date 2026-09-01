@@ -11,6 +11,7 @@ use Crumbls\FilamentDatabase\Concerns\BuildsFormFields;
 use Crumbls\FilamentDatabase\Concerns\InteractsWithDatabase;
 use Crumbls\FilamentDatabase\FilamentDatabasePlugin;
 use Crumbls\FilamentDatabase\Models\DynamicModel;
+use Crumbls\FilamentDatabase\Support\DatabaseLog;
 use Crumbls\FilamentDatabase\Support\SqlInsertStatement;
 use Filament\Pages\Page;
 use Filament\Notifications\Notification;
@@ -471,7 +472,7 @@ class DatabaseManager extends Page implements HasTable
                     } catch (\Throwable $e) {
                         Notification::make()
                             ->title('Snapshot failed')
-                            ->body($e->getMessage())
+                            ->body($this->databaseFailureMessage('schema_snapshot', $e))
                             ->danger()
                             ->send();
                     }
@@ -539,7 +540,7 @@ class DatabaseManager extends Page implements HasTable
                     } catch (\Throwable $e) {
                         Notification::make()
                             ->title('Comparison failed')
-                            ->body($e->getMessage())
+                            ->body($this->databaseFailureMessage('schema_comparison', $e))
                             ->danger()
                             ->send();
                     }
@@ -639,7 +640,7 @@ class DatabaseManager extends Page implements HasTable
                     } catch (\Throwable $e) {
                         Notification::make()
                             ->title('Import failed')
-                            ->body($e->getMessage())
+                            ->body($this->databaseFailureMessage('csv_import', $e))
                             ->danger()
                             ->send();
                     }
@@ -724,14 +725,18 @@ class DatabaseManager extends Page implements HasTable
                                 'user' => auth()->id(),
                                 'connection' => $this->activeConnection,
                                 'table' => $this->activeTable,
-                                'from' => $record->getAttributes(),
-                                'to' => $data,
+                                'changed_columns' => array_keys($data),
+                                'row_fingerprint' => DatabaseLog::rowFingerprint($where),
                             ]);
                         }
 
                         Notification::make()->title('Row updated.')->success()->send();
                     } catch (\Throwable $e) {
-                        Notification::make()->title('Error')->body($e->getMessage())->danger()->send();
+                        Notification::make()
+                            ->title('Row update failed')
+                            ->body($this->databaseFailureMessage('row_update', $e))
+                            ->danger()
+                            ->send();
                     }
                 });
 
@@ -759,13 +764,17 @@ class DatabaseManager extends Page implements HasTable
                                     'user' => auth()->id(),
                                     'connection' => $this->activeConnection,
                                     'table' => $this->activeTable,
-                                    'row' => $record->getAttributes(),
+                                    'row_fingerprint' => DatabaseLog::rowFingerprint($where),
                                 ]);
                             }
 
                             Notification::make()->title('Row deleted.')->success()->send();
                         } catch (\Throwable $e) {
-                            Notification::make()->title('Error')->body($e->getMessage())->danger()->send();
+                            Notification::make()
+                                ->title('Row deletion failed')
+                                ->body($this->databaseFailureMessage('row_delete', $e))
+                                ->danger()
+                                ->send();
                         }
                     });
             }
@@ -800,13 +809,17 @@ class DatabaseManager extends Page implements HasTable
                                 'user' => auth()->id(),
                                 'connection' => $this->activeConnection,
                                 'table' => $this->activeTable,
-                                'data' => $data,
+                                'inserted_columns' => array_keys($data),
                             ]);
                         }
 
                         Notification::make()->title('Row inserted.')->success()->send();
                     } catch (\Throwable $e) {
-                        Notification::make()->title('Error')->body($e->getMessage())->danger()->send();
+                        Notification::make()
+                            ->title('Row insertion failed')
+                            ->body($this->databaseFailureMessage('row_insert', $e))
+                            ->danger()
+                            ->send();
                     }
                 });
         }
@@ -835,7 +848,11 @@ class DatabaseManager extends Page implements HasTable
 
                         Notification::make()->title("Table '{$this->activeTable}' truncated.")->success()->send();
                     } catch (\Throwable $e) {
-                        Notification::make()->title('Error')->body($e->getMessage())->danger()->send();
+                        Notification::make()
+                            ->title('Table truncation failed')
+                            ->body($this->databaseFailureMessage('table_truncate', $e))
+                            ->danger()
+                            ->send();
                     }
                 });
 
@@ -864,7 +881,11 @@ class DatabaseManager extends Page implements HasTable
 
                         Notification::make()->title("Table '{$table}' dropped.")->success()->send();
                     } catch (\Throwable $e) {
-                        Notification::make()->title('Error')->body($e->getMessage())->danger()->send();
+                        Notification::make()
+                            ->title('Table deletion failed')
+                            ->body($this->databaseFailureMessage('table_drop', $e))
+                            ->danger()
+                            ->send();
                     }
                 });
         }
@@ -923,7 +944,7 @@ class DatabaseManager extends Page implements HasTable
                 ->modalDescription('Are you sure you want to delete the selected rows? This cannot be undone.')
                 ->action(function (Collection $records) use ($plugin, $primaryKey) {
                     $count = 0;
-                    $errors = [];
+                    $errorCount = 0;
 
                     foreach ($records as $record) {
                         try {
@@ -937,7 +958,8 @@ class DatabaseManager extends Page implements HasTable
                             $this->deleteRow($this->activeTable, $where, $this->activeConnection);
                             $count++;
                         } catch (\Throwable $e) {
-                            $errors[] = $e->getMessage();
+                            $this->databaseFailureMessage('bulk_row_delete', $e);
+                            $errorCount++;
                         }
                     }
 
@@ -947,14 +969,14 @@ class DatabaseManager extends Page implements HasTable
                             'connection' => $this->activeConnection,
                             'table' => $this->activeTable,
                             'deleted' => $count,
-                            'errors' => count($errors),
+                            'errors' => $errorCount,
                         ]);
                     }
 
-                    if (count($errors) > 0) {
+                    if ($errorCount > 0) {
                         Notification::make()
                             ->title("Deleted {$count} row(s)")
-                            ->body(count($errors) . ' error(s): ' . implode(', ', array_slice($errors, 0, 3)))
+                            ->body("{$errorCount} row(s) could not be deleted. See the application log for references.")
                             ->warning()
                             ->send();
                     } else {
@@ -1050,7 +1072,11 @@ class DatabaseManager extends Page implements HasTable
 
             Notification::make()->title("Table '{$table}' dropped.")->success()->send();
         } catch (\Throwable $e) {
-            Notification::make()->title('Error')->body($e->getMessage())->danger()->send();
+            Notification::make()
+                ->title('Table deletion failed')
+                ->body($this->databaseFailureMessage('table_drop', $e))
+                ->danger()
+                ->send();
         }
     }
 
@@ -1078,7 +1104,11 @@ class DatabaseManager extends Page implements HasTable
 
             Notification::make()->title("Table '{$table}' truncated.")->success()->send();
         } catch (\Throwable $e) {
-            Notification::make()->title('Error')->body($e->getMessage())->danger()->send();
+            Notification::make()
+                ->title('Table truncation failed')
+                ->body($this->databaseFailureMessage('table_truncate', $e))
+                ->danger()
+                ->send();
         }
     }
 
@@ -1130,7 +1160,11 @@ class DatabaseManager extends Page implements HasTable
 
             Notification::make()->title("Column '{$this->newColumnName}' added.")->success()->send();
         } catch (\Throwable $e) {
-            Notification::make()->title('Error')->body($e->getMessage())->danger()->send();
+            Notification::make()
+                ->title('Column creation failed')
+                ->body($this->databaseFailureMessage('column_add', $e))
+                ->danger()
+                ->send();
         }
     }
 
@@ -1157,7 +1191,11 @@ class DatabaseManager extends Page implements HasTable
 
             Notification::make()->title("Column '{$column}' dropped.")->success()->send();
         } catch (\Throwable $e) {
-            Notification::make()->title('Error')->body($e->getMessage())->danger()->send();
+            Notification::make()
+                ->title('Column deletion failed')
+                ->body($this->databaseFailureMessage('column_drop', $e))
+                ->danger()
+                ->send();
         }
     }
 
@@ -1227,14 +1265,20 @@ class DatabaseManager extends Page implements HasTable
                             'user' => auth()->id(),
                             'connection' => $this->activeConnection,
                             'table' => $this->activeTable,
-                            'from' => $columnName,
-                            'to' => $data,
+                            'column' => $columnName,
+                            'renamed_to' => $data['name'],
+                            'type' => $data['type'],
+                            'nullable' => $data['nullable'],
                         ]);
                     }
 
                     Notification::make()->title("Column updated.")->success()->send();
                 } catch (\Throwable $e) {
-                    Notification::make()->title('Error')->body($e->getMessage())->danger()->send();
+                    Notification::make()
+                        ->title('Column update failed')
+                        ->body($this->databaseFailureMessage('column_modify', $e))
+                        ->danger()
+                        ->send();
                 }
             });
     }
@@ -1315,7 +1359,11 @@ class DatabaseManager extends Page implements HasTable
 
             Notification::make()->title("Table '{$this->newTableName}' created.")->success()->send();
         } catch (\Throwable $e) {
-            Notification::make()->title('Error')->body($e->getMessage())->danger()->send();
+            Notification::make()
+                ->title('Table creation failed')
+                ->body($this->databaseFailureMessage('table_create', $e))
+                ->danger()
+                ->send();
         }
     }
 
@@ -1345,10 +1393,10 @@ class DatabaseManager extends Page implements HasTable
         }
 
         if ($plugin->shouldLogQueries()) {
-            Log::info('[filament-database] SQL executed', [
+            Log::info('[filament-database] SQL execution requested', [
                 'user' => auth()->id(),
                 'connection' => $this->activeConnection,
-                'query' => $this->sqlQuery,
+                ...DatabaseLog::queryContext($this->sqlQuery),
             ]);
         }
 
@@ -1367,7 +1415,11 @@ class DatabaseManager extends Page implements HasTable
             ]);
             $this->sqlHistory = array_slice($this->sqlHistory, 0, 20);
         } catch (\Throwable $e) {
-            $this->sqlError = $e->getMessage();
+            $this->sqlError = $this->databaseFailureMessage(
+                'sql_execute',
+                $e,
+                DatabaseLog::queryContext($this->sqlQuery),
+            );
 
             // Add failed query to history
             array_unshift($this->sqlHistory, [
@@ -1449,10 +1501,10 @@ class DatabaseManager extends Page implements HasTable
             }
 
             if ($plugin->shouldLogQueries()) {
-                Log::info('[filament-database] EXPLAIN executed', [
+                Log::info('[filament-database] EXPLAIN requested', [
                     'user' => auth()->id(),
                     'connection' => $this->activeConnection,
-                    'query' => $explainQuery,
+                    ...DatabaseLog::queryContext($explainQuery),
                 ]);
             }
 
@@ -1483,17 +1535,34 @@ class DatabaseManager extends Page implements HasTable
                 ->send();
 
         } catch (\Throwable $e) {
-            $this->sqlError = $e->getMessage();
+            $this->sqlError = $this->databaseFailureMessage(
+                'sql_explain',
+                $e,
+                DatabaseLog::queryContext($this->sqlQuery),
+            );
             
             Notification::make()
                 ->title('EXPLAIN failed')
-                ->body($e->getMessage())
+                ->body($this->sqlError)
                 ->danger()
                 ->send();
         }
     }
 
     // ─── Helpers ───────────────────────────────────────────────
+
+    protected function databaseFailureMessage(
+        string $operation,
+        \Throwable $exception,
+        array $context = [],
+    ): string {
+        return DatabaseLog::failure($operation, $exception, [
+            ...$context,
+            'user_id' => auth()->id(),
+            'connection' => $this->activeConnection,
+            'table' => $this->activeTable,
+        ]);
+    }
 
     public function isReadOnly(): bool
     {
@@ -1548,7 +1617,11 @@ class DatabaseManager extends Page implements HasTable
         try {
             $this->generatedMigration = $this->generateMigration($this->schemaDiff, 'schema_changes');
         } catch (\Throwable $e) {
-            Notification::make()->title('Migration generation failed')->body($e->getMessage())->danger()->send();
+            Notification::make()
+                ->title('Migration generation failed')
+                ->body($this->databaseFailureMessage('migration_generation', $e))
+                ->danger()
+                ->send();
         }
     }
 

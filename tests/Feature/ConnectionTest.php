@@ -57,7 +57,10 @@ describe('Connection Management', function () {
         ]]);
         $plugin = new FilamentDatabasePlugin();
         $result = $plugin->testConnection('broken');
-        expect($result)->toBeString();
+        expect($result)
+            ->toBeString()
+            ->toStartWith('The database operation could not be completed. Reference: ')
+            ->not->toContain('/nonexistent/path/to/db.sqlite');
     });
 
     it('whitelists only specified connections', function () {

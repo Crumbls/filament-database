@@ -170,9 +170,9 @@ class ImportTable
                             fn (): bool => $connection->table($this->table)->insert($item['data']),
                         );
                         $this->successCount++;
-                    } catch (Throwable $exception) {
+                    } catch (Throwable) {
                         $this->errorCount++;
-                        $this->errors[] = "Row {$item['index']}: " . $exception->getMessage();
+                        $this->errors[] = "Row {$item['index']} could not be imported.";
                     }
                 }
             }

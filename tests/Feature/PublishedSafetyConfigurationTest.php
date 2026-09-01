@@ -8,6 +8,7 @@ use Filament\Facades\Filament;
 use Filament\Panel;
 use Illuminate\Contracts\View\View;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Livewire\Livewire;
 use Livewire\Mechanisms\DataStore;
 
@@ -106,6 +107,65 @@ describe('Published safety configuration', function () {
             ->assertSet('sqlError', 'SQL runner is disabled.');
 
         expect(DB::connection('testing')->table('categories')->count())->toBe(0);
+    });
+
+    it('logs query metadata without logging SQL text or literal values', function () {
+        config()->set('filament-database.connections', ['testing']);
+        config()->set('filament-database.query_runner', true);
+        Log::spy();
+
+        registerPublishedSafetyConfigurationPanel(
+            (new FilamentDatabasePlugin())
+                ->authorize(fn (): bool => true)
+                ->logQueries(),
+        );
+
+        $secretQuery = "SELECT 'super-secret-value' AS credential";
+
+        Livewire::test(PublishedSafetyConfigurationPage::class)
+            ->set('sqlQuery', $secretQuery)
+            ->call('executeSql')
+            ->assertSet('sqlError', '');
+
+        Log::shouldHaveReceived('info')
+            ->once()
+            ->withArgs(function (string $message, array $context) use ($secretQuery): bool {
+                return $message === '[filament-database] SQL execution requested'
+                    && $context['statement'] === 'SELECT'
+                    && $context['query_hash'] === hash('sha256', $secretQuery)
+                    && $context['query_length'] === strlen($secretQuery)
+                    && ! array_key_exists('query', $context)
+                    && ! str_contains(json_encode($context, JSON_THROW_ON_ERROR), 'super-secret-value');
+            });
+    });
+
+    it('does not expose raw database errors to the browser or application log', function () {
+        config()->set('filament-database.connections', ['testing']);
+        config()->set('filament-database.query_runner', true);
+        Log::spy();
+
+        registerPublishedSafetyConfigurationPanel(
+            (new FilamentDatabasePlugin())->authorize(fn (): bool => true),
+        );
+
+        $secret = 'super_secret_customer_table';
+        $component = Livewire::test(PublishedSafetyConfigurationPage::class)
+            ->set('sqlQuery', "SELECT * FROM {$secret}")
+            ->call('executeSql');
+        $error = $component->get('sqlError');
+
+        expect($error)
+            ->toStartWith('The database operation could not be completed. Reference: ')
+            ->not->toContain($secret);
+
+        Log::shouldHaveReceived('error')
+            ->once()
+            ->withArgs(function (string $message, array $context) use ($secret): bool {
+                return $message === '[filament-database] Database operation failed'
+                    && $context['operation'] === 'sql_execute'
+                    && $context['statement'] === 'SELECT'
+                    && ! str_contains(json_encode($context, JSON_THROW_ON_ERROR), $secret);
+            });
     });
 
     it('prevents writes disguised as explain analyze in read-only mode', function () {
