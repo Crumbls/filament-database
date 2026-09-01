@@ -39,13 +39,31 @@ describe('DynamicModel', function () {
     });
 
     it('preserves table and connection on newInstance', function () {
-        DynamicModel::forTable('posts', 'testing', 'id');
-        $instance = (new DynamicModel)->newInstance(['title' => 'Test']);
+        $model = DynamicModel::forTable('posts', 'testing', 'id');
+        $instance = $model->newInstance(['title' => 'Test']);
 
         expect($instance->getTable())->toBe('posts')
             ->and($instance->getConnectionName())->toBe('testing')
             ->and($instance->getKeyName())->toBe('id')
             ->and($instance->incrementing)->toBeTrue();
+    });
+
+    it('keeps independently configured models isolated when interleaved', function () {
+        $users = DynamicModel::forTable('users', 'testing', 'id');
+        $posts = DynamicModel::forTable('posts', 'secondary', 'post_uuid');
+
+        $userInstance = $users->newInstance(['name' => 'Alice']);
+        $postInstance = $posts->newInstance(['title' => 'Post']);
+
+        expect($userInstance->getTable())->toBe('users')
+            ->and($userInstance->getConnectionName())->toBe('testing')
+            ->and($userInstance->getKeyName())->toBe('id')
+            ->and($postInstance->getTable())->toBe('posts')
+            ->and($postInstance->getConnectionName())->toBe('secondary')
+            ->and($postInstance->getKeyName())->toBe('post_uuid')
+            ->and($users->getTable())->toBe('users')
+            ->and($users->getConnectionName())->toBe('testing')
+            ->and($users->getKeyName())->toBe('id');
     });
 
     it('can query the database', function () {

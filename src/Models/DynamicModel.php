@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Crumbls\FilamentDatabase\Models;
 
 use Illuminate\Database\Eloquent\Model;
@@ -10,25 +12,16 @@ class DynamicModel extends Model
     protected $guarded = [];
     public $incrementing = false;
 
-    protected static ?string $dynamicTable = null;
-    protected static ?string $dynamicConnection = null;
-    protected static ?string $dynamicKeyName = null;
-
     public static function forTable(string $table, string $connection, ?string $primaryKey = null): static
     {
-        $instance = new static;
+        $instance = new static();
         $instance->setTable($table);
         $instance->setConnection($connection);
 
-        if ($primaryKey) {
+        if ($primaryKey !== null) {
             $instance->setKeyName($primaryKey);
             $instance->incrementing = true;
         }
-
-        // Store for static resolution in query builder
-        static::$dynamicTable = $table;
-        static::$dynamicConnection = $connection;
-        static::$dynamicKeyName = $primaryKey;
 
         return $instance;
     }
@@ -37,22 +30,10 @@ class DynamicModel extends Model
     {
         $model = parent::newInstance($attributes, $exists);
 
-        if (static::$dynamicTable) {
-            $model->setTable(static::$dynamicTable);
-        }
-        if (static::$dynamicConnection) {
-            $model->setConnection(static::$dynamicConnection);
-        }
-        if (static::$dynamicKeyName) {
-            $model->setKeyName(static::$dynamicKeyName);
-            $model->incrementing = true;
-        }
+        $model->setKeyName($this->getKeyName());
+        $model->setIncrementing($this->getIncrementing());
+        $model->setKeyType($this->getKeyType());
 
         return $model;
-    }
-
-    public function getKeyName(): string
-    {
-        return static::$dynamicKeyName ?? 'id';
     }
 }
