@@ -31,6 +31,25 @@ describe('Schema Operations', function () {
         expect($nameCol)->not->toBeNull();
     });
 
+    it('reuses metadata within a request and invalidates it after DDL', function () {
+        $connection = \Illuminate\Support\Facades\DB::connection('testing');
+        $connection->flushQueryLog();
+        $connection->enableQueryLog();
+
+        $first = $this->db->getColumns('users', 'testing');
+        $queriesAfterFirstRead = count($connection->getQueryLog());
+        $second = $this->db->getColumns('users', 'testing');
+
+        expect($second)->toBe($first)
+            ->and($connection->getQueryLog())->toHaveCount($queriesAfterFirstRead);
+
+        $this->db->addColumn('users', 'cache_probe', 'string', [], 'testing');
+        $afterDdl = $this->db->getColumns('users', 'testing');
+
+        expect(array_column($afterDdl, 'name'))->toContain('cache_probe')
+            ->and(count($connection->getQueryLog()))->toBeGreaterThan($queriesAfterFirstRead);
+    });
+
     it('views indexes for a table', function () {
         $indexes = $this->db->getIndexes('users', 'testing');
 

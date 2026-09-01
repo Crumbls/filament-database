@@ -2,88 +2,56 @@
 
 declare(strict_types=1);
 
-use Crumbls\FilamentDatabase\Concerns\InteractsWithDatabase;
-use Illuminate\Support\Facades\Schema;
+use Crumbls\FilamentDatabase\FilamentDatabasePlugin;
+use Crumbls\FilamentDatabase\Pages\DatabaseManager;
+use Filament\Facades\Filament;
+use Filament\Panel;
+use Illuminate\Contracts\View\View;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+
+final class DatabaseOverviewPage extends DatabaseManager
+{
+    public function bootedInteractsWithTable(): void
+    {
+        // These tests exercise metadata methods without rendering a Filament table.
+    }
+
+    public function render(): View
+    {
+        return view()->file(__DIR__ . '/../Fixtures/empty.blade.php');
+    }
+
+    public function resetTable(): void
+    {
+        // These tests do not render table records.
+    }
+}
+
+function registerDatabaseOverviewPanel(): void
+{
+    $panel = Panel::make()
+        ->id('database-overview')
+        ->default()
+        ->plugin(
+            (new FilamentDatabasePlugin())
+                ->authorize(fn (): bool => true)
+                ->connections(['testing', 'secondary']),
+        );
+
+    Filament::registerPanel($panel);
+    Filament::setCurrentPanel($panel);
+}
 
 describe('Database Overview', function () {
 
     beforeEach(function () {
         $this->seedTestData();
-        
-        // Create a test object with the required methods
-        $this->manager = new class {
-            use InteractsWithDatabase;
 
-            public string $activeConnection = 'testing';
+        registerDatabaseOverviewPanel();
 
-            public function getDatabaseOverview(?string $connection = null): array
-            {
-                $conn = $connection ?? $this->activeConnection;
-                $tables = $this->getFilteredTables($conn);
-                
-                $totalTables = count($tables);
-                $totalRows = 0;
-                $largestTables = [];
-                
-                foreach ($tables as $table) {
-                    $rowCount = $table['row_count'] ?? 0;
-                    $totalRows += $rowCount;
-                    $largestTables[] = [
-                        'name' => $table['name'],
-                        'rows' => $rowCount,
-                    ];
-                }
-                
-                usort($largestTables, fn($a, $b) => $b['rows'] <=> $a['rows']);
-                $largestTables = array_slice($largestTables, 0, 10);
-                
-                $driver = $this->getDriverName($conn);
-                $database = DB::connection($conn)->getDatabaseName();
-                
-                return [
-                    'total_tables' => $totalTables,
-                    'total_rows' => $totalRows,
-                    'largest_tables' => $largestTables,
-                    'driver' => $driver,
-                    'database' => $database,
-                ];
-            }
-
-            public function getFilteredTables(?string $connection = null): array
-            {
-                $tables = $this->getTables($connection);
-                $conn = $connection ?? $this->activeConnection;
-                $driver = $this->getDriverName($conn);
-
-                try {
-                    if ($driver === 'mysql') {
-                        $database = DB::connection($conn)->getDatabaseName();
-                        $counts = DB::connection($conn)
-                            ->table('information_schema.TABLES')
-                            ->where('TABLE_SCHEMA', $database)
-                            ->whereIn('TABLE_NAME', array_column($tables, 'name'))
-                            ->pluck('TABLE_ROWS', 'TABLE_NAME')
-                            ->toArray();
-
-                        foreach ($tables as &$table) {
-                            $table['row_count'] = $counts[$table['name']] ?? 0;
-                        }
-                    } else {
-                        foreach ($tables as &$table) {
-                            $tableName = $table['name'];
-                            $table['row_count'] = DB::connection($conn)->table($tableName)->count();
-                        }
-                    }
-                } catch (\Throwable) {
-                    foreach ($tables as &$table) {
-                        $table['row_count'] = null;
-                    }
-                }
-
-                return $tables;
-            }
-        };
+        $this->manager = app(DatabaseOverviewPage::class);
+        $this->manager->activeConnection = 'testing';
     });
 
     it('returns correct table count', function () {
@@ -97,7 +65,7 @@ describe('Database Overview', function () {
         $overview = $this->manager->getDatabaseOverview('testing');
 
         expect($overview)->toHaveKey('total_rows')
-            ->and($overview['total_rows'])->toBeGreaterThan(0); // We seeded data
+            ->and($overview['total_rows'])->toBe(5);
     });
 
     it('returns connection info including driver and database name', function () {
@@ -185,6 +153,30 @@ describe('Database Overview', function () {
             expect($table)->toHaveKey('name')
                 ->and($table)->toHaveKey('row_count');
         }
+    });
+
+    it('loads SQLite row counts in one statement and caches the result for the render cycle', function () {
+        $connection = DB::connection('testing');
+        $connection->flushQueryLog();
+        $connection->enableQueryLog();
+
+        $first = $this->manager->getFilteredTables('testing');
+        $queriesAfterFirstCall = $connection->getQueryLog();
+        $rowCountQueries = array_filter(
+            $queriesAfterFirstCall,
+            static fn (array $query): bool => str_contains($query['query'], 'row_count'),
+        );
+
+        $second = $this->manager->getFilteredTables('testing');
+
+        expect($first)->toBe($second)
+            ->and($rowCountQueries)->toHaveCount(1)
+            ->and($connection->getQueryLog())->toHaveCount(count($queriesAfterFirstCall))
+            ->and(collect($first)->pluck('row_count', 'name')->all())->toMatchArray([
+                'users' => 2,
+                'categories' => 2,
+                'posts' => 1,
+            ]);
     });
 
     it('calculates total rows correctly across all tables', function () {

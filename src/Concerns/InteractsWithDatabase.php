@@ -25,6 +25,13 @@ trait InteractsWithDatabase
         'tinyInteger', 'unsignedBigInteger', 'unsignedInteger', 'uuid',
     ];
 
+    protected array $databaseMetadataCache = [
+        'tables' => [],
+        'columns' => [],
+        'indexes' => [],
+        'foreign_keys' => [],
+    ];
+
     protected function canAccessDatabaseTable(string $table, ?string $connection): bool
     {
         return true;
@@ -109,7 +116,13 @@ trait InteractsWithDatabase
 
     public function getTables(?string $connection = null): array
     {
-        return array_values(array_filter(
+        $key = $this->databaseMetadataCacheKey($connection);
+
+        if (array_key_exists($key, $this->databaseMetadataCache['tables'])) {
+            return $this->databaseMetadataCache['tables'][$key];
+        }
+
+        return $this->databaseMetadataCache['tables'][$key] = array_values(array_filter(
             $this->getSchemaBuilder($connection)->getTables(),
             fn (array $table): bool => $this->canAccessDatabaseTable(
                 $table['name'],
@@ -122,21 +135,43 @@ trait InteractsWithDatabase
     {
         $this->authorizeDatabaseTable($table, $connection);
 
-        return $this->getSchemaBuilder($connection)->getColumns($table);
+        $key = $this->databaseMetadataCacheKey($connection, $table);
+
+        if (array_key_exists($key, $this->databaseMetadataCache['columns'])) {
+            return $this->databaseMetadataCache['columns'][$key];
+        }
+
+        return $this->databaseMetadataCache['columns'][$key] = $this
+            ->getSchemaBuilder($connection)
+            ->getColumns($table);
     }
 
     public function getIndexes(string $table, ?string $connection = null): array
     {
         $this->authorizeDatabaseTable($table, $connection);
 
-        return $this->getSchemaBuilder($connection)->getIndexes($table);
+        $key = $this->databaseMetadataCacheKey($connection, $table);
+
+        if (array_key_exists($key, $this->databaseMetadataCache['indexes'])) {
+            return $this->databaseMetadataCache['indexes'][$key];
+        }
+
+        return $this->databaseMetadataCache['indexes'][$key] = $this
+            ->getSchemaBuilder($connection)
+            ->getIndexes($table);
     }
 
     public function getForeignKeys(string $table, ?string $connection = null): array
     {
         $this->authorizeDatabaseTable($table, $connection);
 
-        return array_values(array_filter(
+        $key = $this->databaseMetadataCacheKey($connection, $table);
+
+        if (array_key_exists($key, $this->databaseMetadataCache['foreign_keys'])) {
+            return $this->databaseMetadataCache['foreign_keys'][$key];
+        }
+
+        return $this->databaseMetadataCache['foreign_keys'][$key] = array_values(array_filter(
             $this->getSchemaBuilder($connection)->getForeignKeys($table),
             fn (array $foreignKey): bool => ! isset($foreignKey['foreign_table'])
                 || $this->canAccessDatabaseTable($foreignKey['foreign_table'], $connection),
@@ -216,6 +251,7 @@ trait InteractsWithDatabase
         $this->authorizeDatabaseTable($table, $connection);
 
         $this->getSchemaBuilder($connection)->drop($table);
+        $this->flushDatabaseMetadataCache($connection);
     }
 
     public function truncateTable(string $table, ?string $connection = null): void
@@ -237,6 +273,7 @@ trait InteractsWithDatabase
         }
 
         $this->getSchemaBuilder($connection)->rename($from, $to);
+        $this->flushDatabaseMetadataCache($connection);
     }
 
     public function dropColumn(string $table, string $column, ?string $connection = null): void
@@ -246,6 +283,7 @@ trait InteractsWithDatabase
         $this->assertColumnExists($table, $column, $connection);
 
         $this->getSchemaBuilder($connection)->dropColumns($table, [$column]);
+        $this->flushDatabaseMetadataCache($connection);
     }
 
     public function addColumn(string $table, string $name, string $type, array $options = [], ?string $connection = null): void
@@ -285,6 +323,7 @@ trait InteractsWithDatabase
                 $col->after($options['after']);
             }
         });
+        $this->flushDatabaseMetadataCache($connection);
     }
 
     public function renameColumn(string $table, string $from, string $to, ?string $connection = null): void
@@ -301,6 +340,7 @@ trait InteractsWithDatabase
         $this->getSchemaBuilder($connection)->table($table, function ($blueprint) use ($from, $to) {
             $blueprint->renameColumn($from, $to);
         });
+        $this->flushDatabaseMetadataCache($connection);
     }
 
     public function modifyColumn(string $table, string $name, string $type, array $options, ?string $connection = null): void
@@ -328,6 +368,7 @@ trait InteractsWithDatabase
                 $col->default($options['default']);
             }
         });
+        $this->flushDatabaseMetadataCache($connection);
     }
 
     public function createTable(string $name, array $columns, ?string $connection = null): void
@@ -382,6 +423,41 @@ trait InteractsWithDatabase
                 }
             }
         });
+        $this->flushDatabaseMetadataCache($connection);
+    }
+
+    protected function databaseMetadataCacheKey(?string $connection, ?string $table = null): string
+    {
+        return implode(':', [
+            $connection ?? (string) config('database.default'),
+            $table ?? '',
+        ]);
+    }
+
+    protected function flushDatabaseMetadataCache(?string $connection = null): void
+    {
+        if ($connection === null) {
+            $this->databaseMetadataCache = [
+                'tables' => [],
+                'columns' => [],
+                'indexes' => [],
+                'foreign_keys' => [],
+            ];
+
+            return;
+        }
+
+        $prefix = $this->databaseMetadataCacheKey($connection);
+
+        foreach ($this->databaseMetadataCache as &$entries) {
+            foreach (array_keys($entries) as $key) {
+                if (str_starts_with($key, $prefix)) {
+                    unset($entries[$key]);
+                }
+            }
+        }
+
+        unset($entries);
     }
 
     protected function assertValidSchemaIdentifier(string $identifier, string $kind): void
@@ -563,6 +639,8 @@ trait InteractsWithDatabase
      */
     public function captureSchema(?string $connection = null): array
     {
+        $this->flushDatabaseMetadataCache($connection);
+
         $schema = [];
         $tables = $this->getTables($connection);
 

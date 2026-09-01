@@ -11,6 +11,7 @@ use Crumbls\FilamentDatabase\Concerns\BuildsFormFields;
 use Crumbls\FilamentDatabase\Concerns\InteractsWithDatabase;
 use Crumbls\FilamentDatabase\FilamentDatabasePlugin;
 use Crumbls\FilamentDatabase\Models\DynamicModel;
+use Crumbls\FilamentDatabase\Repositories\DatabaseMetadataRepository;
 use Crumbls\FilamentDatabase\Support\DatabaseLog;
 use Crumbls\FilamentDatabase\Support\SqlInsertStatement;
 use Filament\Pages\Page;
@@ -46,6 +47,8 @@ class DatabaseManager extends Page implements HasTable
     protected static ?string $title = 'Database';
     protected static ?string $slug = 'database';
     protected string $view = 'filament-database::pages.database-manager';
+
+    protected array $filteredTablesCache = [];
 
     #[Locked]
     public array $connectionHealth = [];
@@ -314,7 +317,7 @@ class DatabaseManager extends Page implements HasTable
         $largestTables = [];
         
         foreach ($tables as $table) {
-            $rowCount = $table['row_count'] ?? 0;
+            $rowCount = (int) ($table['row_count'] ?? 0);
             $totalRows += $rowCount;
             $largestTables[] = [
                 'name' => $table['name'],
@@ -346,50 +349,28 @@ class DatabaseManager extends Page implements HasTable
         $connection ??= $this->activeConnection;
         $this->authorizeDatabaseConnection($connection);
 
-        $plugin = static::getPlugin();
-        $tables = $this->getTables($connection);
-        $tables = array_filter($tables, fn($t) => $plugin->isTableVisible($t['name']));
+        if (array_key_exists($connection, $this->filteredTablesCache)) {
+            return $this->filteredTablesCache[$connection];
+        }
 
-        // Add row counts efficiently
-        $conn = $connection ?? $this->activeConnection;
-        $driver = $this->getDriverName($conn);
+        $tables = $this->getTables($connection);
 
         try {
-            if ($driver === 'mysql') {
-                // Use information_schema for MySQL (fast, uses cached stats)
-                $database = DB::connection($conn)->getDatabaseName();
-                $counts = DB::connection($conn)
-                    ->table('information_schema.TABLES')
-                    ->where('TABLE_SCHEMA', $database)
-                    ->whereIn('TABLE_NAME', array_column($tables, 'name'))
-                    ->pluck('TABLE_ROWS', 'TABLE_NAME')
-                    ->toArray();
+            $counts = (new DatabaseMetadataRepository(DB::connection($connection)))
+                ->tableRowCounts(array_column($tables, 'name'));
 
-                foreach ($tables as &$table) {
-                    $table['row_count'] = $counts[$table['name']] ?? 0;
-                }
-            } else {
-                // For SQLite/PostgreSQL, do individual COUNT queries (cached per request)
-                static $rowCounts = [];
-
-                foreach ($tables as &$table) {
-                    $tableName = $table['name'];
-                    if (!isset($rowCounts[$conn][$tableName])) {
-                        $rowCounts[$conn][$tableName] = DB::connection($conn)
-                            ->table($tableName)
-                            ->count();
-                    }
-                    $table['row_count'] = $rowCounts[$conn][$tableName];
-                }
+            foreach ($tables as &$table) {
+                $table['row_count'] = $counts[$table['name']] ?? null;
             }
         } catch (\Throwable) {
-            // If row count fails, just skip it
             foreach ($tables as &$table) {
                 $table['row_count'] = null;
             }
         }
 
-        return $tables;
+        unset($table);
+
+        return $this->filteredTablesCache[$connection] = array_values($tables);
     }
 
     // ─── Filament Table ────────────────────────────────────────
