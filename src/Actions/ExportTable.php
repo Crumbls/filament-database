@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Crumbls\FilamentDatabase\Actions;
 
+use Crumbls\FilamentDatabase\Support\SqlInsertStatement;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -14,7 +15,7 @@ class ExportTable
         protected string $connection,
         protected string $format,
         protected bool $allRows = false,
-        protected ?array $currentPageData = null
+        protected ?array $currentPageData = null,
     ) {
     }
 
@@ -91,34 +92,10 @@ class ExportTable
 
     protected function exportSql($handle): void
     {
-        $columns = DB::connection($this->connection)
-            ->getSchemaBuilder()
-            ->getColumns($this->table);
-
-        $columnNames = array_column($columns, 'name');
+        $statement = new SqlInsertStatement(DB::connection($this->connection));
 
         foreach ($this->getData() as $row) {
-            $row = (array) $row;
-            $values = [];
-
-            foreach ($row as $value) {
-                if ($value === null) {
-                    $values[] = 'NULL';
-                } elseif (is_numeric($value)) {
-                    $values[] = $value;
-                } else {
-                    $values[] = "'" . addslashes((string) $value) . "'";
-                }
-            }
-
-            $sql = sprintf(
-                "INSERT INTO `%s` (%s) VALUES (%s);\n",
-                $this->table,
-                implode(', ', array_map(fn($c) => "`{$c}`", $columnNames)),
-                implode(', ', $values)
-            );
-
-            fwrite($handle, $sql);
+            fwrite($handle, $statement->build($this->table, (array) $row) . PHP_EOL);
         }
     }
 

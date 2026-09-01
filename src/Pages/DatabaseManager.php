@@ -11,6 +11,7 @@ use Crumbls\FilamentDatabase\Concerns\BuildsFormFields;
 use Crumbls\FilamentDatabase\Concerns\InteractsWithDatabase;
 use Crumbls\FilamentDatabase\FilamentDatabasePlugin;
 use Crumbls\FilamentDatabase\Models\DynamicModel;
+use Crumbls\FilamentDatabase\Support\SqlInsertStatement;
 use Filament\Pages\Page;
 use Filament\Notifications\Notification;
 use Filament\Actions\Action;
@@ -672,14 +673,8 @@ class DatabaseManager extends Page implements HasTable
                 ->label('Copy as SQL INSERT')
                 ->icon('heroicon-m-command-line')
                 ->action(function ($record) {
-                    $data = $record->getAttributes();
-                    $columns = implode(', ', array_map(fn($k) => "`{$k}`", array_keys($data)));
-                    $values = implode(', ', array_map(function($v) {
-                        if ($v === null) return 'NULL';
-                        if (is_numeric($v)) return $v;
-                        return "'" . addslashes($v) . "'";
-                    }, array_values($data)));
-                    $output = "INSERT INTO `{$this->activeTable}` ({$columns}) VALUES ({$values});";
+                    $output = (new SqlInsertStatement(DB::connection($this->activeConnection)))
+                        ->build($this->activeTable, $record->getAttributes());
                     $this->dispatch('copy-to-clipboard', text: $output);
                     Notification::make()->title('Copied as SQL INSERT')->success()->send();
                 });

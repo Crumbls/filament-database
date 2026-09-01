@@ -33,13 +33,26 @@ describe('Export and Import', function () {
             expect($response->headers->get('Content-Disposition'))->toContain('.json');
         });
 
-        it('exports as SQL generating INSERT statements', function () {
-            $exporter = ExportTable::make('users', 'testing', 'sql', true);
+        it('exports executable SQL with the row column set and safely quoted values', function () {
+            $exporter = ExportTable::make('users', 'testing', 'sql', false, [[
+                'id' => 42,
+                'email' => "o'reilly@example.com",
+                'name' => '00123',
+            ]]);
             $response = $exporter->download();
 
             expect($response)->toBeInstanceOf(\Symfony\Component\HttpFoundation\StreamedResponse::class);
             expect($response->headers->get('Content-Type'))->toBe('text/plain');
             expect($response->headers->get('Content-Disposition'))->toContain('.sql');
+
+            ob_start();
+            $response->sendContent();
+            $content = ob_get_clean();
+
+            expect($content)->toBe(
+                "INSERT INTO \"users\" (\"id\", \"email\", \"name\") "
+                . "VALUES (42, 'o''reilly@example.com', '00123');\n",
+            );
         });
 
         it('exports current page data only when allRows is false', function () {
