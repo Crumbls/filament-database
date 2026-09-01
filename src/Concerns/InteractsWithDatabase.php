@@ -12,6 +12,19 @@ trait InteractsWithDatabase
 {
     private const MAX_SQL_RESULT_ROWS = 500;
 
+    private const MAX_SCHEMA_COLUMNS = 100;
+
+    private const MAX_SCHEMA_IDENTIFIER_LENGTH = 63;
+
+    protected const ALLOWED_COLUMN_TYPES = [
+        'id', 'bigIncrements', 'bigInteger', 'binary', 'boolean',
+        'char', 'date', 'dateTime', 'decimal', 'double',
+        'enum', 'float', 'increments', 'integer', 'json',
+        'jsonb', 'longText', 'mediumInteger', 'mediumText',
+        'smallInteger', 'string', 'text', 'time', 'timestamp',
+        'tinyInteger', 'unsignedBigInteger', 'unsignedInteger', 'uuid',
+    ];
+
     protected function canAccessDatabaseTable(string $table, ?string $connection): bool
     {
         return true;
@@ -217,6 +230,12 @@ trait InteractsWithDatabase
         $this->authorizeDatabaseTable($from, $connection);
         $this->authorizeDatabaseTable($to, $connection, mustExist: false);
 
+        $this->assertValidSchemaIdentifier($to, 'table');
+
+        if ($this->getSchemaBuilder($connection)->hasTable($to)) {
+            throw new \InvalidArgumentException("Table already exists: {$to}");
+        }
+
         $this->getSchemaBuilder($connection)->rename($from, $to);
     }
 
@@ -224,24 +243,33 @@ trait InteractsWithDatabase
     {
         $this->authorizeDatabaseTable($table, $connection);
 
+        $this->assertColumnExists($table, $column, $connection);
+
         $this->getSchemaBuilder($connection)->dropColumns($table, [$column]);
     }
-
-    protected static array $allowedColumnTypes = [
-        'id', 'bigIncrements', 'bigInteger', 'binary', 'boolean',
-        'char', 'date', 'dateTime', 'decimal', 'double',
-        'enum', 'float', 'increments', 'integer', 'json',
-        'jsonb', 'longText', 'mediumInteger', 'mediumText',
-        'smallInteger', 'string', 'text', 'time', 'timestamp',
-        'tinyInteger', 'unsignedBigInteger', 'unsignedInteger', 'uuid',
-    ];
 
     public function addColumn(string $table, string $name, string $type, array $options = [], ?string $connection = null): void
     {
         $this->authorizeDatabaseTable($table, $connection);
 
-        if (!in_array($type, static::$allowedColumnTypes, true)) {
-            throw new \InvalidArgumentException("Invalid column type: {$type}");
+        $this->assertValidSchemaIdentifier($name, 'column');
+
+        if ($this->getSchemaBuilder($connection)->hasColumn($table, $name)) {
+            throw new \InvalidArgumentException("Column already exists: {$name}");
+        }
+
+        $this->assertValidColumnDefinition([
+            ...$options,
+            'name' => $name,
+            'type' => $type,
+        ]);
+
+        if (isset($options['after'])) {
+            if (! is_string($options['after'])) {
+                throw new \InvalidArgumentException('The after column option must be a string.');
+            }
+
+            $this->assertColumnExists($table, $options['after'], $connection);
         }
 
         $this->getSchemaBuilder($connection)->table($table, function ($blueprint) use ($name, $type, $options) {
@@ -263,6 +291,13 @@ trait InteractsWithDatabase
     {
         $this->authorizeDatabaseTable($table, $connection);
 
+        $this->assertColumnExists($table, $from, $connection);
+        $this->assertValidSchemaIdentifier($to, 'column');
+
+        if ($from !== $to && $this->getSchemaBuilder($connection)->hasColumn($table, $to)) {
+            throw new \InvalidArgumentException("Column already exists: {$to}");
+        }
+
         $this->getSchemaBuilder($connection)->table($table, function ($blueprint) use ($from, $to) {
             $blueprint->renameColumn($from, $to);
         });
@@ -272,9 +307,13 @@ trait InteractsWithDatabase
     {
         $this->authorizeDatabaseTable($table, $connection);
 
-        if (!in_array($type, static::$allowedColumnTypes, true)) {
-            throw new \InvalidArgumentException("Invalid column type: {$type}");
-        }
+        $this->assertColumnExists($table, $name, $connection);
+
+        $this->assertValidColumnDefinition([
+            ...$options,
+            'name' => $name,
+            'type' => $type,
+        ]);
 
         $this->getSchemaBuilder($connection)->table($table, function ($blueprint) use ($name, $type, $options) {
             $col = $blueprint->{$type}($name, ...($options['arguments'] ?? []))->change();
@@ -295,12 +334,39 @@ trait InteractsWithDatabase
     {
         $this->authorizeDatabaseTable($name, $connection, mustExist: false);
 
+        $this->assertValidSchemaIdentifier($name, 'table');
+
+        if ($this->getSchemaBuilder($connection)->hasTable($name)) {
+            throw new \InvalidArgumentException("Table already exists: {$name}");
+        }
+
+        if ($columns === [] || count($columns) > self::MAX_SCHEMA_COLUMNS) {
+            throw new \InvalidArgumentException(sprintf(
+                'A table must contain between 1 and %d columns.',
+                self::MAX_SCHEMA_COLUMNS,
+            ));
+        }
+
+        $columnNames = [];
+
+        foreach ($columns as $column) {
+            if (! is_array($column)) {
+                throw new \InvalidArgumentException('Each column definition must be an array.');
+            }
+
+            $this->assertValidColumnDefinition($column);
+
+            $normalizedName = strtolower($column['name']);
+
+            if (isset($columnNames[$normalizedName])) {
+                throw new \InvalidArgumentException("Duplicate column name: {$column['name']}");
+            }
+
+            $columnNames[$normalizedName] = true;
+        }
+
         $this->getSchemaBuilder($connection)->create($name, function ($blueprint) use ($columns) {
             foreach ($columns as $col) {
-                if (!in_array($col['type'], static::$allowedColumnTypes, true)) {
-                    throw new \InvalidArgumentException("Invalid column type: {$col['type']}");
-                }
-
                 $column = $blueprint->{$col['type']}($col['name'], ...($col['arguments'] ?? []));
                 if ($col['nullable'] ?? false) {
                     $column->nullable();
@@ -316,6 +382,113 @@ trait InteractsWithDatabase
                 }
             }
         });
+    }
+
+    protected function assertValidSchemaIdentifier(string $identifier, string $kind): void
+    {
+        if (
+            $identifier === ''
+            || strlen($identifier) > self::MAX_SCHEMA_IDENTIFIER_LENGTH
+            || preg_match('/\A[A-Za-z_][A-Za-z0-9_]*\z/D', $identifier) !== 1
+        ) {
+            throw new \InvalidArgumentException(sprintf(
+                'Invalid %s name: identifiers must start with a letter or underscore, contain only letters, numbers, and underscores, and be at most %d characters.',
+                $kind,
+                self::MAX_SCHEMA_IDENTIFIER_LENGTH,
+            ));
+        }
+    }
+
+    protected function assertValidColumnDefinition(array $column): void
+    {
+        if (! isset($column['name'], $column['type']) || ! is_string($column['name']) || ! is_string($column['type'])) {
+            throw new \InvalidArgumentException('Column definitions require string name and type values.');
+        }
+
+        $this->assertValidSchemaIdentifier($column['name'], 'column');
+
+        if (! in_array($column['type'], self::ALLOWED_COLUMN_TYPES, true)) {
+            throw new \InvalidArgumentException("Invalid column type: {$column['type']}");
+        }
+
+        foreach (['nullable', 'primary', 'autoIncrement'] as $booleanOption) {
+            if (array_key_exists($booleanOption, $column) && ! is_bool($column[$booleanOption])) {
+                throw new \InvalidArgumentException("Column option {$booleanOption} must be boolean.");
+            }
+        }
+
+        if (
+            array_key_exists('default', $column)
+            && ! is_scalar($column['default'])
+            && $column['default'] !== null
+        ) {
+            throw new \InvalidArgumentException('Column defaults must be scalar values or null.');
+        }
+
+        $arguments = $column['arguments'] ?? [];
+
+        if (! is_array($arguments) || count($arguments) > 3) {
+            throw new \InvalidArgumentException('Column arguments must be an array containing at most three values.');
+        }
+
+        $this->assertValidColumnArguments($column['type'], $arguments);
+    }
+
+    protected function assertValidColumnArguments(string $type, array $arguments): void
+    {
+        if ($arguments === []) {
+            return;
+        }
+
+        if (in_array($type, ['char', 'string'], true)) {
+            if (count($arguments) !== 1 || ! is_int($arguments[0]) || $arguments[0] < 1 || $arguments[0] > 65535) {
+                throw new \InvalidArgumentException('String column length must be an integer between 1 and 65535.');
+            }
+
+            return;
+        }
+
+        if ($type === 'decimal') {
+            if (
+                count($arguments) > 2
+                || array_filter($arguments, static fn (mixed $value): bool => ! is_int($value)) !== []
+                || $arguments[0] < 1
+                || $arguments[0] > 65
+                || (isset($arguments[1]) && ($arguments[1] < 0 || $arguments[1] > $arguments[0]))
+            ) {
+                throw new \InvalidArgumentException('Decimal precision and scale are invalid.');
+            }
+
+            return;
+        }
+
+        if ($type === 'enum') {
+            $values = $arguments[0] ?? null;
+
+            if (
+                count($arguments) !== 1
+                || ! is_array($values)
+                || $values === []
+                || count($values) > 100
+                || array_filter(
+                    $values,
+                    static fn (mixed $value): bool => ! is_string($value) || $value === '' || strlen($value) > 255,
+                ) !== []
+            ) {
+                throw new \InvalidArgumentException('Enum columns require between 1 and 100 non-empty string values.');
+            }
+
+            return;
+        }
+
+        throw new \InvalidArgumentException("Column type {$type} does not accept arguments.");
+    }
+
+    protected function assertColumnExists(string $table, string $column, ?string $connection): void
+    {
+        if (! $this->getSchemaBuilder($connection)->hasColumn($table, $column)) {
+            throw new \InvalidArgumentException("Column does not exist: {$column}");
+        }
     }
 
     /**

@@ -7,6 +7,9 @@
             <x-filament::input.wrapper>
                 <x-filament::input type="text" wire:model="newTableName" />
             </x-filament::input.wrapper>
+            @error('newTableName')
+                <p class="text-sm text-danger-600">{{ $message }}</p>
+            @enderror
         </div>
 
         <div class="fdb-field">
@@ -17,6 +20,9 @@
                         <x-filament::input.wrapper>
                             <x-filament::input type="text" wire:model="newTableColumns.{{ $i }}.name" placeholder="Name" />
                         </x-filament::input.wrapper>
+                        @error("newTableColumns.{$i}.name")
+                            <p class="text-sm text-danger-600">{{ $message }}</p>
+                        @enderror
                     </div>
                     <div class="fdb-col-row-type">
                         <x-filament::input.wrapper>
@@ -26,6 +32,9 @@
                                 @endforeach
                             </x-filament::input.select>
                         </x-filament::input.wrapper>
+                        @error("newTableColumns.{$i}.type")
+                            <p class="text-sm text-danger-600">{{ $message }}</p>
+                        @enderror
                     </div>
                     <label class="fdb-checkbox-label">
                         <input type="checkbox" wire:model="newTableColumns.{{ $i }}.nullable" /> Null

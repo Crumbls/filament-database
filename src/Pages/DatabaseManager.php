@@ -27,6 +27,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\Rule;
 use Livewire\Attributes\Locked;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use UnitEnum;
@@ -591,8 +592,10 @@ class DatabaseManager extends Page implements HasTable
                     Components\FileUpload::make('csv_file')
                         ->label('CSV File')
                         ->acceptedFileTypes(['text/csv', 'text/plain', 'application/csv'])
+                        ->maxSize(ImportTable::MAX_FILE_SIZE_KILOBYTES)
+                        ->storeFiles(false)
                         ->required()
-                        ->helperText('CSV file with headers. Columns will be auto-matched to table columns.'),
+                        ->helperText('CSV file with headers, up to 10 MB. Columns will be auto-matched to table columns.'),
                 ])
                 ->modalWidth('2xl')
                 ->action(function (array $data) use ($plugin) {
@@ -1104,6 +1107,13 @@ class DatabaseManager extends Page implements HasTable
             return;
         }
 
+        $this->validate([
+            'newColumnName' => $this->schemaIdentifierRules(),
+            'newColumnType' => ['required', 'string', Rule::in($this->getColumnTypes())],
+            'newColumnNullable' => ['required', 'boolean'],
+            'newColumnDefault' => ['nullable', 'string', 'max:65535'],
+        ]);
+
         try {
             $options = ['nullable' => $this->newColumnNullable];
             if ($this->newColumnDefault !== '') {
@@ -1175,6 +1185,8 @@ class DatabaseManager extends Page implements HasTable
                 Components\TextInput::make('name')
                     ->label('Name')
                     ->default($columnName)
+                    ->maxLength(63)
+                    ->regex('/\A[A-Za-z_][A-Za-z0-9_]*\z/D')
                     ->required(),
                 Components\Select::make('type')
                     ->label('Type')
@@ -1257,14 +1269,14 @@ class DatabaseManager extends Page implements HasTable
     {
         $this->newTableName = '';
         $this->newTableColumns = [
-            ['name' => 'id', 'type' => 'id', 'nullable' => false, 'default' => '', 'primary' => true, 'autoIncrement' => true, 'arguments' => []],
+            ['name' => 'id', 'type' => 'id', 'nullable' => false, 'primary' => true, 'autoIncrement' => true, 'arguments' => []],
         ];
         $this->showCreateTable = true;
     }
 
     public function addNewTableColumn(): void
     {
-        $this->newTableColumns[] = ['name' => '', 'type' => 'string', 'nullable' => false, 'default' => '', 'primary' => false, 'autoIncrement' => false, 'arguments' => []];
+        $this->newTableColumns[] = ['name' => '', 'type' => 'string', 'nullable' => false, 'primary' => false, 'autoIncrement' => false, 'arguments' => []];
     }
 
     public function removeNewTableColumn(int $index): void
@@ -1281,6 +1293,17 @@ class DatabaseManager extends Page implements HasTable
             Notification::make()->title('Read-only mode.')->danger()->send();
             return;
         }
+
+        $this->validate([
+            'newTableName' => $this->schemaIdentifierRules(),
+            'newTableColumns' => ['required', 'array', 'min:1', 'max:100'],
+            'newTableColumns.*.name' => [...$this->schemaIdentifierRules(), 'distinct:ignore_case'],
+            'newTableColumns.*.type' => ['required', 'string', Rule::in($this->getColumnTypes())],
+            'newTableColumns.*.nullable' => ['required', 'boolean'],
+            'newTableColumns.*.primary' => ['sometimes', 'boolean'],
+            'newTableColumns.*.autoIncrement' => ['sometimes', 'boolean'],
+            'newTableColumns.*.arguments' => ['sometimes', 'array', 'max:3'],
+        ]);
 
         try {
             $this->createTable($this->newTableName, $this->newTableColumns, $this->activeConnection);
@@ -1494,14 +1517,16 @@ class DatabaseManager extends Page implements HasTable
 
     public function getColumnTypes(): array
     {
+        return self::ALLOWED_COLUMN_TYPES;
+    }
+
+    protected function schemaIdentifierRules(): array
+    {
         return [
-            'id', 'bigIncrements', 'bigInteger', 'binary', 'boolean',
-            'char', 'date', 'dateTime', 'decimal', 'double',
-            'enum', 'float', 'increments', 'integer', 'json',
-            'jsonb', 'longText', 'mediumInteger', 'mediumText',
-            'smallInteger', 'string', 'text', 'time', 'timestamp',
-            'tinyInteger', 'unsignedBigInteger', 'unsignedInteger',
-            'uuid',
+            'required',
+            'string',
+            'max:63',
+            'regex:/\A[A-Za-z_][A-Za-z0-9_]*\z/D',
         ];
     }
 

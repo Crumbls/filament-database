@@ -127,7 +127,8 @@ describe('Form field building', function () {
         $columns = [['name' => 'metadata', 'type_name' => 'json', 'nullable' => true, 'default' => null, 'auto_increment' => false]];
         $fields = $this->builder->exposeBuildFormFields($columns, [], 'testing', false);
 
-        expect($fields[0])->toBeInstanceOf(Components\Textarea::class);
+        expect($fields[0])->toBeInstanceOf(Components\Textarea::class)
+            ->and($fields[0]->getValidationRules())->toContain('json');
     });
 
     it('maps integer types to numeric TextInput', function () {
@@ -145,10 +146,23 @@ describe('Form field building', function () {
     });
 
     it('maps varchar/string to TextInput', function () {
-        $columns = [['name' => 'title', 'type_name' => 'varchar', 'nullable' => false, 'default' => null, 'auto_increment' => false]];
+        $columns = [['name' => 'title', 'type_name' => 'varchar', 'type' => 'varchar(64)', 'nullable' => false, 'default' => null, 'auto_increment' => false]];
         $fields = $this->builder->exposeBuildFormFields($columns, [], 'testing', false);
 
-        expect($fields[0])->toBeInstanceOf(Components\TextInput::class);
+        expect($fields[0])->toBeInstanceOf(Components\TextInput::class)
+            ->and($fields[0]->getMaxLength())->toBe(64);
+    });
+
+    it('requires non-nullable values and permits nullable values', function () {
+        $columns = [
+            ['name' => 'title', 'type_name' => 'varchar', 'nullable' => false, 'default' => null, 'auto_increment' => false],
+            ['name' => 'summary', 'type_name' => 'text', 'nullable' => true, 'default' => null, 'auto_increment' => false],
+        ];
+
+        $fields = $this->builder->exposeBuildFormFields($columns, [], 'testing', false);
+
+        expect($fields[0]->isRequired())->toBeTrue()
+            ->and($fields[1]->isRequired())->toBeFalse();
     });
 
     it('maps foreign key columns to Select', function () {

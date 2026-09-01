@@ -7,6 +7,9 @@
             <x-filament::input.wrapper>
                 <x-filament::input type="text" wire:model="newColumnName" />
             </x-filament::input.wrapper>
+            @error('newColumnName')
+                <p class="text-sm text-danger-600">{{ $message }}</p>
+            @enderror
         </div>
         <div class="fdb-field">
             <label>Type</label>
@@ -17,6 +20,9 @@
                     @endforeach
                 </x-filament::input.select>
             </x-filament::input.wrapper>
+            @error('newColumnType')
+                <p class="text-sm text-danger-600">{{ $message }}</p>
+            @enderror
         </div>
         <div class="fdb-field">
             <label class="fdb-checkbox-label">

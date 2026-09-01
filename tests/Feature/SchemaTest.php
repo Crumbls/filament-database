@@ -85,6 +85,42 @@ describe('Schema Operations', function () {
             ->and($colNames)->toContain('content');
     });
 
+    it('rejects unsafe schema identifiers before executing DDL', function (string $tableName) {
+        $tablesBefore = Schema::connection('testing')->getTableListing();
+
+        expect(fn () => $this->db->createTable($tableName, [
+            ['name' => 'id', 'type' => 'id'],
+        ], 'testing'))->toThrow(\InvalidArgumentException::class);
+
+        expect(Schema::connection('testing')->getTableListing())->toBe($tablesBefore);
+    })->with([
+        'statement fragment' => 'reports;drop_table',
+        'qualified name' => 'public.reports',
+        'leading digit' => '2026_reports',
+        'over database limit' => str_repeat('a', 64),
+    ]);
+
+    it('rejects duplicate column names before creating a table', function () {
+        expect(fn () => $this->db->createTable('duplicate_columns', [
+            ['name' => 'status', 'type' => 'string'],
+            ['name' => 'STATUS', 'type' => 'string'],
+        ], 'testing'))->toThrow(\InvalidArgumentException::class, 'Duplicate column name');
+
+        expect(Schema::connection('testing')->hasTable('duplicate_columns'))->toBeFalse();
+    });
+
+    it('rejects malformed column options before altering a table', function () {
+        expect(fn () => $this->db->addColumn(
+            'users',
+            'unsafe_column',
+            'string',
+            ['nullable' => 'false'],
+            'testing',
+        ))->toThrow(\InvalidArgumentException::class, 'must be boolean');
+
+        expect(Schema::connection('testing')->hasColumn('users', 'unsafe_column'))->toBeFalse();
+    });
+
     it('drops a table', function () {
         Schema::connection('testing')->create('temp_table', function ($table) {
             $table->id();

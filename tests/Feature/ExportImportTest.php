@@ -155,6 +155,45 @@ describe('Export and Import', function () {
             unlink($csvPath);
         });
 
+        it('rejects oversized CSV files before parsing content', function () {
+            $handle = fopen($this->csvPath, 'wb');
+            ftruncate($handle, (ImportTable::MAX_FILE_SIZE_KILOBYTES * 1024) + 1);
+            fclose($handle);
+
+            expect(fn () => ImportTable::make('users', 'testing')->parseCsv($this->csvPath))
+                ->toThrow(\RuntimeException::class, 'may not exceed 10 MB');
+        });
+
+        it('rejects ambiguous duplicate headers', function () {
+            $handle = fopen($this->csvPath, 'wb');
+            fputcsv($handle, ['email', 'EMAIL']);
+            fputcsv($handle, ['one@example.com', 'two@example.com']);
+            fclose($handle);
+
+            expect(fn () => ImportTable::make('users', 'testing')->parseCsv($this->csvPath))
+                ->toThrow(\RuntimeException::class, 'Duplicate CSV header');
+        });
+
+        it('rejects rows whose width does not match the header', function () {
+            $handle = fopen($this->csvPath, 'wb');
+            fputcsv($handle, ['name', 'email']);
+            fputcsv($handle, ['Missing Email']);
+            fclose($handle);
+
+            expect(fn () => ImportTable::make('users', 'testing')->parseCsv($this->csvPath))
+                ->toThrow(\RuntimeException::class, 'contains 1 columns; expected 2');
+        });
+
+        it('rejects mappings to columns outside the destination schema', function () {
+            $importer = ImportTable::make('users', 'testing');
+            $importer->parseCsv($this->csvPath);
+
+            expect(fn () => $importer->import([0 => 'not_a_real_column']))
+                ->toThrow(\RuntimeException::class, 'invalid target column');
+
+            expect(DB::connection('testing')->table('users')->count())->toBe(2);
+        });
+
         it('converts empty strings to NULL during import', function () {
             $csvPath = sys_get_temp_dir() . '/test_import_nulls.csv';
             $csvData = [
@@ -173,16 +212,10 @@ describe('Export and Import', function () {
             $mapping = $importer->autoMapColumns();
             $result = $importer->import($mapping);
 
-            // Import may fail if is_admin is NOT NULL, or it may succeed with NULL
-            // Either way, we're testing the behavior is correct
-            expect($result['success'] + $result['errors'])->toBe(1);
-
-            // If successful, verify the user was inserted
-            if ($result['success'] > 0) {
-                $user = DB::connection('testing')->table('users')->where('email', 'frank@example.com')->first();
-                expect($user)->not->toBeNull()
-                    ->and($user->name)->toBe('Frank');
-            }
+            expect($result['success'])->toBe(0)
+                ->and($result['errors'])->toBe(1)
+                ->and(DB::connection('testing')->table('users')->where('email', 'frank@example.com')->exists())
+                ->toBeFalse();
 
             unlink($csvPath);
         });

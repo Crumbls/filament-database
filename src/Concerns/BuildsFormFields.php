@@ -39,6 +39,7 @@ trait BuildsFormFields
         foreach ($columns as $col) {
             $name = $col['name'];
             $type = strtolower($col['type_name'] ?? $col['type'] ?? 'varchar');
+            $typeDefinition = strtolower($col['type'] ?? $type);
             $nullable = $col['nullable'] ?? false;
             $default = $col['default'] ?? null;
             $autoIncrement = $col['auto_increment'] ?? false;
@@ -65,6 +66,8 @@ trait BuildsFormFields
 
                     if ($nullable) {
                         $field->nullable()->placeholder("NULL");
+                    } else {
+                        $field->required();
                     }
 
                     $fields[] = $field;
@@ -100,6 +103,7 @@ trait BuildsFormFields
                 in_array($type, ['json', 'jsonb']) => Components\Textarea::make($name)
                     ->label($name)
                     ->rows(6)
+                    ->json()
                     ->helperText('Enter valid JSON'),
 
                 // Integer types
@@ -114,13 +118,17 @@ trait BuildsFormFields
                     ->numeric(),
 
                 // Enum (MySQL)
-                str_starts_with($type, 'enum') => $this->buildEnumField($name, $type),
+                str_starts_with($type, 'enum') => $this->buildEnumField($name, $typeDefinition),
 
                 // Default: string/varchar
                 default => Components\TextInput::make($name)
                     ->label($name)
-                    ->maxLength($this->extractLength($type)),
+                    ->maxLength($this->extractLength($typeDefinition)),
             };
+
+            if (! $nullable) {
+                $field->required();
+            }
 
             // Apply nullable
             $isNullableStringField = $nullable && (
