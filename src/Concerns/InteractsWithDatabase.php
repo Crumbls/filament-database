@@ -35,6 +35,15 @@ trait InteractsWithDatabase
         $this->authorizeDatabaseConnection($connection);
     }
 
+    protected function authorizeRowMutation(
+        string $table,
+        array $where,
+        ?string $connection,
+        bool $destructive,
+    ): void {
+        $this->authorizeDatabaseTable($table, $connection);
+    }
+
     protected function isReadOnlySql(string $sql): bool
     {
         $sql = trim($sql);
@@ -146,7 +155,7 @@ trait InteractsWithDatabase
 
     public function updateRow(string $table, array $where, array $data, ?string $connection = null): int
     {
-        $this->authorizeDatabaseTable($table, $connection);
+        $this->authorizeRowMutation($table, $where, $connection, destructive: false);
 
         $query = DB::connection($connection)->table($table);
         foreach ($where as $col => $val) {
@@ -157,7 +166,7 @@ trait InteractsWithDatabase
 
     public function deleteRow(string $table, array $where, ?string $connection = null): int
     {
-        $this->authorizeDatabaseTable($table, $connection);
+        $this->authorizeRowMutation($table, $where, $connection, destructive: true);
 
         $query = DB::connection($connection)->table($table);
         foreach ($where as $col => $val) {

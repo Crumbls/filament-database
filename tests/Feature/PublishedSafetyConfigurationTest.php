@@ -74,6 +74,23 @@ describe('Published safety configuration', function () {
             ->toBe($rowCount);
     });
 
+    it('rejects direct row mutations when read-only is enabled only in config', function () {
+        config()->set('filament-database.connections', ['testing']);
+        config()->set('filament-database.read_only', true);
+        $this->seedTestData();
+
+        registerPublishedSafetyConfigurationPanel(
+            (new FilamentDatabasePlugin())->authorize(fn (): bool => true),
+        );
+
+        Livewire::test(PublishedSafetyConfigurationPage::class)
+            ->call('updateRow', 'users', ['id' => 1], ['name' => 'Changed'], 'testing')
+            ->assertForbidden();
+
+        expect(DB::connection('testing')->table('users')->where('id', 1)->value('name'))
+            ->toBe('Alice');
+    });
+
     it('prevents SQL execution when the runner is disabled only in config', function () {
         config()->set('filament-database.connections', ['testing']);
         config()->set('filament-database.read_only', false);

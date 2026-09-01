@@ -170,6 +170,33 @@ class DatabaseManager extends Page implements HasTable
         }
     }
 
+    protected function authorizeRowMutation(
+        string $table,
+        array $where,
+        ?string $connection,
+        bool $destructive,
+    ): void {
+        $connection ??= $this->activeConnection;
+
+        $this->authorizeDatabaseTable($table, $connection);
+
+        $plugin = static::getPlugin();
+
+        if ($plugin->isReadOnly() || ($destructive && $plugin->isDestructivePrevented())) {
+            throw new AuthorizationException('Database row mutation access denied.');
+        }
+
+        $primaryKey = $this->detectPrimaryKey($table, $connection);
+
+        if (
+            $primaryKey === null
+            || count($where) !== 1
+            || ! array_key_exists($primaryKey, $where)
+        ) {
+            throw new AuthorizationException('A single-column primary key is required.');
+        }
+    }
+
     // ─── Lifecycle ─────────────────────────────────────────────
 
     public function mount(): void
@@ -373,9 +400,11 @@ class DatabaseManager extends Page implements HasTable
     {
         $plugin = static::getPlugin();
         $columns = [];
+        $primaryKey = null;
 
         if ($this->activeTable && $this->activeConnection) {
             $dbColumns = $this->getColumns($this->activeTable, $this->activeConnection);
+            $primaryKey = $this->detectPrimaryKey($this->activeTable, $this->activeConnection);
 
             foreach ($dbColumns as $col) {
                 $columns[] = TextColumn::make($col['name'])
@@ -547,7 +576,7 @@ class DatabaseManager extends Page implements HasTable
         }
 
         // Import action (blocked in read-only mode)
-        if (!$plugin->isReadOnly() && $this->activeTable) {
+        if (! $plugin->isReadOnly() && $this->activeTable) {
             $headerActions[] = Action::make('import')
                 ->label('Import')
                 ->icon('heroicon-m-arrow-up-tray')
@@ -610,7 +639,7 @@ class DatabaseManager extends Page implements HasTable
         $rowActionItems = [];
 
         // Copy Row As... actions (always available, read-only safe)
-        if ($this->activeTable) {
+        if ($this->activeTable && $primaryKey !== null) {
             $rowActionItems[] = Action::make('copy_as_php')
                 ->label('Copy as PHP Array')
                 ->icon('heroicon-m-code-bracket')
@@ -661,7 +690,7 @@ class DatabaseManager extends Page implements HasTable
         }
 
         // Edit & Delete row actions
-        if (!$plugin->isReadOnly() && $this->activeTable) {
+        if (! $plugin->isReadOnly() && $this->activeTable && $primaryKey !== null) {
             $dbColumns = $this->getColumns($this->activeTable, $this->activeConnection);
             $foreignKeys = $this->getForeignKeys($this->activeTable, $this->activeConnection);
 
@@ -671,17 +700,18 @@ class DatabaseManager extends Page implements HasTable
                 ->modalHeading('Edit Row')
                 ->form($this->buildFormFields($dbColumns, $foreignKeys, $this->activeConnection, false))
                 ->fillForm(fn($record) => $record->getAttributes())
-                ->action(function (array $data, $record) use ($plugin) {
+                ->action(function (array $data, $record) use ($plugin, $primaryKey) {
                     try {
                         $data = $this->processNullCheckboxes($data);
-                        $primaryKey = $this->detectPrimaryKey($this->activeTable, $this->activeConnection);
                         $attrs = $record->getAttributes();
-                        $where = ($primaryKey && isset($attrs[$primaryKey]))
-                            ? [$primaryKey => $attrs[$primaryKey]]
-                            : $attrs;
-                        if ($primaryKey) {
-                            unset($data[$primaryKey]);
+
+                        if (! array_key_exists($primaryKey, $attrs)) {
+                            throw new \LogicException('The row primary key is missing.');
                         }
+
+                        $where = [$primaryKey => $attrs[$primaryKey]];
+                        unset($data[$primaryKey]);
+
                         $this->updateRow($this->activeTable, $where, $data, $this->activeConnection);
 
                         if ($plugin->shouldLogChanges()) {
@@ -708,13 +738,15 @@ class DatabaseManager extends Page implements HasTable
                     ->requiresConfirmation()
                     ->modalHeading('Delete row')
                     ->modalDescription('Are you sure you want to delete this row? This cannot be undone.')
-                    ->action(function ($record) use ($plugin) {
+                    ->action(function ($record) use ($plugin, $primaryKey) {
                         try {
-                            $primaryKey = $this->detectPrimaryKey($this->activeTable, $this->activeConnection);
                             $attrs = $record->getAttributes();
-                            $where = ($primaryKey && isset($attrs[$primaryKey]))
-                                ? [$primaryKey => $attrs[$primaryKey]]
-                                : $attrs;
+
+                            if (! array_key_exists($primaryKey, $attrs)) {
+                                throw new \LogicException('The row primary key is missing.');
+                            }
+
+                            $where = [$primaryKey => $attrs[$primaryKey]];
                             $this->deleteRow($this->activeTable, $where, $this->activeConnection);
 
                             if ($plugin->shouldLogChanges()) {
@@ -841,7 +873,7 @@ class DatabaseManager extends Page implements HasTable
         $bulkActions = [];
 
         // Bulk Export (always available)
-        if ($this->activeTable) {
+        if ($this->activeTable && $primaryKey !== null) {
             $bulkActions[] = BulkAction::make('bulk_export')
                 ->label('Export Selected')
                 ->icon('heroicon-m-arrow-down-tray')
@@ -871,7 +903,12 @@ class DatabaseManager extends Page implements HasTable
         }
 
         // Bulk Delete (guarded)
-        if (!$plugin->isReadOnly() && !$plugin->isDestructivePrevented() && $this->activeTable) {
+        if (
+            ! $plugin->isReadOnly()
+            && ! $plugin->isDestructivePrevented()
+            && $this->activeTable
+            && $primaryKey !== null
+        ) {
             $bulkActions[] = BulkAction::make('bulk_delete')
                 ->label('Delete Selected')
                 ->icon('heroicon-m-trash')
@@ -879,17 +916,19 @@ class DatabaseManager extends Page implements HasTable
                 ->requiresConfirmation()
                 ->modalHeading('Delete selected rows')
                 ->modalDescription('Are you sure you want to delete the selected rows? This cannot be undone.')
-                ->action(function (Collection $records) use ($plugin) {
+                ->action(function (Collection $records) use ($plugin, $primaryKey) {
                     $count = 0;
                     $errors = [];
-                    $primaryKey = $this->detectPrimaryKey($this->activeTable, $this->activeConnection);
 
                     foreach ($records as $record) {
                         try {
                             $attrs = $record->getAttributes();
-                            $where = ($primaryKey && isset($attrs[$primaryKey]))
-                                ? [$primaryKey => $attrs[$primaryKey]]
-                                : $attrs;
+
+                            if (! array_key_exists($primaryKey, $attrs)) {
+                                throw new \LogicException('The row primary key is missing.');
+                            }
+
+                            $where = [$primaryKey => $attrs[$primaryKey]];
                             $this->deleteRow($this->activeTable, $where, $this->activeConnection);
                             $count++;
                         } catch (\Throwable $e) {
@@ -939,22 +978,17 @@ class DatabaseManager extends Page implements HasTable
 
     protected function detectPrimaryKey(string $tableName, string $connection): ?string
     {
-        $indexes = $this->getIndexes($tableName, $connection);
-        foreach ($indexes as $idx) {
-            if (($idx['primary'] ?? false) || str_contains(strtolower($idx['name'] ?? ''), 'primary')) {
-                $cols = $idx['columns'] ?? [];
-                if (count($cols) === 1) {
-                    return $cols[0];
-                }
+        foreach ($this->getIndexes($tableName, $connection) as $index) {
+            if (! ($index['primary'] ?? false)) {
+                continue;
             }
+
+            $columns = $index['columns'] ?? [];
+
+            return count($columns) === 1 ? $columns[0] : null;
         }
 
-        $columns = $this->getColumns($tableName, $connection);
-        foreach ($columns as $col) {
-            if ($col['name'] === 'id') return 'id';
-        }
-
-        return $columns[0]['name'] ?? null;
+        return null;
     }
 
     /**

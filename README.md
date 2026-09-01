@@ -156,6 +156,9 @@ should use database credentials without DML, DDL, file, function-execution, or
 administrative privileges and should configure a server-side statement timeout.
 SQL result sets returned to Livewire are capped at 500 rows.
 
+Row-level record and selection actions require a genuine single-column primary
+key. Keyless and composite-key tables remain browse-only for existing records.
+
 ## Testing
 
 ```bash
