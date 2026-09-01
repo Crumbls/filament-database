@@ -56,6 +56,8 @@ describe('SQL Runner', function () {
         });
 
         it('plugin queryRunnerReadOnly blocks writes independently', function () {
+            config()->set('filament-database.read_only', false);
+
             $plugin = (new FilamentDatabasePlugin())->queryRunnerReadOnly();
             expect($plugin->isQueryRunnerReadOnly())->toBeTrue()
                 ->and($plugin->isReadOnly())->toBeFalse();
@@ -66,10 +68,12 @@ describe('SQL Runner', function () {
             expect($plugin->isQueryRunnerEnabled())->toBeFalse();
         });
 
-        it('plugin runner enabled by default', function () {
+        it('plugin runner follows its disabled configuration default', function () {
+            config()->set('filament-database.query_runner', false);
+
             $plugin = new FilamentDatabasePlugin();
-            expect($plugin->isQueryRunnerEnabled())->toBeTrue()
-                ->and($plugin->isQueryRunnerReadOnly())->toBeFalse();
+
+            expect($plugin->isQueryRunnerEnabled())->toBeFalse();
         });
     });
 });

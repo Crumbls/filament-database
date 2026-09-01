@@ -1,17 +1,18 @@
 <?php
 
+declare(strict_types=1);
+
 return [
     /*
     |--------------------------------------------------------------------------
     | Allowed Connections
     |--------------------------------------------------------------------------
     |
-    | Which database connections can be managed. Use null to allow all
-    | connections defined in config('database.connections'), or provide
-    | an array of connection names to whitelist.
+    | Which database connections can be managed. Connections must be
+    | explicitly listed before the database manager can access them.
     |
     */
-    'connections' => null,
+    'connections' => [],
 
     /*
     |--------------------------------------------------------------------------
@@ -22,11 +23,11 @@ return [
     | DML write operations will be blocked.
     |
     */
-    'read_only' => false,
+    'read_only' => true,
 
     /*
     |--------------------------------------------------------------------------
-    | Max Rows Per Page
+    | Rows Per Page
     |--------------------------------------------------------------------------
     */
     'rows_per_page' => 25,
@@ -36,7 +37,7 @@ return [
     | Enable SQL Query Runner
     |--------------------------------------------------------------------------
     */
-    'query_runner' => true,
+    'query_runner' => false,
 
     /*
     |--------------------------------------------------------------------------

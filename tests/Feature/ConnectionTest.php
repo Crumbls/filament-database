@@ -6,16 +6,17 @@ use Crumbls\FilamentDatabase\FilamentDatabasePlugin;
 
 describe('Connection Management', function () {
 
-    it('lists available connections', function () {
-        $plugin = new FilamentDatabasePlugin();
+    it('lists explicitly configured connections', function () {
+        $plugin = (new FilamentDatabasePlugin())
+            ->connections(['testing', 'secondary']);
         $connections = $plugin->getAllowedConnections();
 
         expect($connections)->toBeArray()
-            ->and($connections)->toContain('testing');
+            ->and($connections)->toBe(['testing', 'secondary']);
     });
 
-    it('validates a known connection', function () {
-        $plugin = new FilamentDatabasePlugin();
+    it('validates an explicitly allowed connection', function () {
+        $plugin = (new FilamentDatabasePlugin())->connections(['testing']);
         expect($plugin->isConnectionValid('testing'))->toBeTrue();
     });
 
@@ -25,7 +26,9 @@ describe('Connection Management', function () {
     });
 
     it('excludes specified connections', function () {
-        $plugin = (new FilamentDatabasePlugin())->excludeConnections(['secondary']);
+        $plugin = (new FilamentDatabasePlugin())
+            ->connections(['testing', 'secondary'])
+            ->excludeConnections(['secondary']);
         $allowed = $plugin->getAllowedConnections();
 
         expect($allowed)->not->toContain('secondary');
@@ -70,5 +73,20 @@ describe('Connection Management', function () {
 
         expect($allowed)->toContain('testing')
             ->and($allowed)->not->toContain('imaginary');
+    });
+
+    it('fails closed when no connections are configured', function () {
+        config()->set('filament-database.connections', []);
+
+        $plugin = new FilamentDatabasePlugin();
+
+        expect($plugin->getAllowedConnections())->toBe([])
+            ->and($plugin->isConnectionValid('testing'))->toBeFalse();
+    });
+
+    it('fails closed when the connection configuration is invalid', function () {
+        config()->set('filament-database.connections', 'testing');
+
+        expect((new FilamentDatabasePlugin())->getAllowedConnections())->toBe([]);
     });
 });

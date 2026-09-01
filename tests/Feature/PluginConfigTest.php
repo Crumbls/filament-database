@@ -6,14 +6,25 @@ use Crumbls\FilamentDatabase\FilamentDatabasePlugin;
 
 describe('Plugin Configuration', function () {
 
-    it('defaults to not read-only', function () {
+    it('uses the configured read-only safety default', function () {
+        config()->set('filament-database.read_only', true);
+
         $plugin = new FilamentDatabasePlugin();
-        expect($plugin->isReadOnly())->toBeFalse();
+
+        expect($plugin->isReadOnly())->toBeTrue();
     });
 
     it('enables read-only mode', function () {
         $plugin = (new FilamentDatabasePlugin())->readOnly();
         expect($plugin->isReadOnly())->toBeTrue();
+    });
+
+    it('allows fluent configuration to disable configured read-only mode', function () {
+        config()->set('filament-database.read_only', true);
+
+        $plugin = (new FilamentDatabasePlugin())->readOnly(false);
+
+        expect($plugin->isReadOnly())->toBeFalse();
     });
 
     it('defaults to not preventDestructive', function () {
@@ -45,7 +56,9 @@ describe('Plugin Configuration', function () {
     });
 
     it('excludes connections', function () {
-        $plugin = (new FilamentDatabasePlugin())->excludeConnections(['secondary']);
+        $plugin = (new FilamentDatabasePlugin())
+            ->connections(['testing', 'secondary'])
+            ->excludeConnections(['secondary']);
         $allowed = $plugin->getAllowedConnections();
 
         expect($allowed)->toContain('testing')
@@ -111,9 +124,21 @@ describe('Plugin Configuration', function () {
         expect($plugin->getRowsPerPage())->toBe(50);
     });
 
-    it('defaults rows per page to 25', function () {
+    it('uses configured rows per page', function () {
+        config()->set('filament-database.rows_per_page', 75);
+
         $plugin = new FilamentDatabasePlugin();
-        expect($plugin->getRowsPerPage())->toBe(25);
+
+        expect($plugin->getRowsPerPage())->toBe(75);
+    });
+
+    it('clamps configured rows per page to safe bounds', function () {
+        config()->set('filament-database.rows_per_page', 1000);
+
+        $plugin = (new FilamentDatabasePlugin())->maxRowsPerPage(200);
+
+        expect($plugin->getRowsPerPage())->toBe(200)
+            ->and($plugin->rowsPerPage(0)->getRowsPerPage())->toBe(1);
     });
 
     it('sets max rows per page', function () {
@@ -151,8 +176,19 @@ describe('Plugin Configuration', function () {
         expect($plugin->isQueryRunnerEnabled())->toBeFalse();
     });
 
-    it('defaults query runner to enabled', function () {
+    it('uses the configured query runner safety default', function () {
+        config()->set('filament-database.query_runner', false);
+
         $plugin = new FilamentDatabasePlugin();
+
+        expect($plugin->isQueryRunnerEnabled())->toBeFalse();
+    });
+
+    it('allows fluent configuration to enable a disabled query runner', function () {
+        config()->set('filament-database.query_runner', false);
+
+        $plugin = (new FilamentDatabasePlugin())->disableQueryRunner(false);
+
         expect($plugin->isQueryRunnerEnabled())->toBeTrue();
     });
 

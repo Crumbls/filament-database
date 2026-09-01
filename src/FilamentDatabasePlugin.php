@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Crumbls\FilamentDatabase;
 
 use Closure;
@@ -21,14 +23,14 @@ class FilamentDatabasePlugin implements Plugin
     protected ?string $defaultConnection = null;
 
     // ─── Safety ────────────────────────────────────────────────
-    protected bool $readOnly = false;
+    protected ?bool $readOnly = null;
     protected bool $preventDestructive = false;
     protected bool $requireConfirmation = false;
     protected array $hiddenTables = [];
     protected ?array $visibleTables = null;
 
     // ─── SQL Runner ────────────────────────────────────────────
-    protected bool $queryRunnerEnabled = true;
+    protected ?bool $queryRunnerEnabled = null;
     protected bool $queryRunnerReadOnly = false;
 
     // ─── UI/UX ─────────────────────────────────────────────────
@@ -36,7 +38,7 @@ class FilamentDatabasePlugin implements Plugin
     protected ?string $navigationIcon = null;
     protected ?int $navigationSort = null;
     protected ?string $navigationLabel = null;
-    protected int $rowsPerPage = 25;
+    protected ?int $rowsPerPage = null;
     protected int $maxRowsPerPage = 500;
 
     // ─── Audit ─────────────────────────────────────────────────
@@ -136,10 +138,10 @@ class FilamentDatabasePlugin implements Plugin
     public function getAllowedConnections(): array
     {
         $all = array_keys(config('database.connections', []));
-        $allowed = $this->connections ?? config('filament-database.connections') ?? $all;
+        $allowed = $this->connections ?? config('filament-database.connections', []);
 
-        if (!is_array($allowed)) {
-            $allowed = $all;
+        if (! is_array($allowed)) {
+            return [];
         }
 
         $allowed = array_intersect($all, $allowed);
@@ -150,7 +152,7 @@ class FilamentDatabasePlugin implements Plugin
 
     public function isConnectionValid(string $connection): bool
     {
-        return in_array($connection, $this->getAllowedConnections());
+        return in_array($connection, $this->getAllowedConnections(), true);
     }
 
     /**
@@ -178,7 +180,8 @@ class FilamentDatabasePlugin implements Plugin
 
     public function isReadOnly(): bool
     {
-        return $this->readOnly;
+        return $this->readOnly
+            ?? (bool) config('filament-database.read_only', true);
     }
 
     public function preventDestructive(bool $prevent = true): static
@@ -246,7 +249,8 @@ class FilamentDatabasePlugin implements Plugin
 
     public function isQueryRunnerEnabled(): bool
     {
-        return $this->queryRunnerEnabled;
+        return $this->queryRunnerEnabled
+            ?? (bool) config('filament-database.query_runner', false);
     }
 
     public function queryRunnerReadOnly(bool $readOnly = true): static
@@ -316,7 +320,10 @@ class FilamentDatabasePlugin implements Plugin
 
     public function getRowsPerPage(): int
     {
-        return $this->rowsPerPage;
+        $rowsPerPage = $this->rowsPerPage
+            ?? (int) config('filament-database.rows_per_page', 25);
+
+        return max(1, min($rowsPerPage, $this->getMaxRowsPerPage()));
     }
 
     public function maxRowsPerPage(int $max): static
@@ -327,7 +334,7 @@ class FilamentDatabasePlugin implements Plugin
 
     public function getMaxRowsPerPage(): int
     {
-        return $this->maxRowsPerPage;
+        return max(1, $this->maxRowsPerPage);
     }
 
     // ════════════════════════════════════════════════════════════

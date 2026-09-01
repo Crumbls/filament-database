@@ -35,9 +35,10 @@ public function panel(Panel $panel): Panel
         // ...
         ->plugins([
             FilamentDatabasePlugin::make()
-                ->authorize(function() { 
+                ->connections(['mysql'])
+                ->authorize(function (): bool {
                     // You need to customize this. It controls who can view it.
-                    return false; 
+                    return false;
                 }),
         ]);
 }
@@ -73,6 +74,11 @@ Publish the config:
 ```bash
 php artisan vendor:publish --tag=filament-database-config
 ```
+
+The published configuration fails closed: no connections are allowed, database
+writes are read-only, and the SQL runner is disabled until explicitly enabled.
+Fluent plugin configuration overrides the corresponding published values for a
+specific Filament panel.
 
 ### Plugin API
 
