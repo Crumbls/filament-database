@@ -151,6 +151,11 @@ FilamentDatabasePlugin::make()
     ->logChanges()                        // audit all data changes
 ```
 
+Read-only SQL classification is defense in depth. Production read-only panels
+should use database credentials without DML, DDL, file, function-execution, or
+administrative privileges and should configure a server-side statement timeout.
+SQL result sets returned to Livewire are capped at 500 rows.
+
 ## Testing
 
 ```bash

@@ -155,6 +155,21 @@ class DatabaseManager extends Page implements HasTable
         }
     }
 
+    protected function authorizeSqlQuery(string $sql, ?string $connection): void
+    {
+        $this->authorizeDatabaseConnection($connection);
+
+        $plugin = static::getPlugin();
+
+        if (! $plugin->isQueryRunnerEnabled()) {
+            throw new AuthorizationException('SQL runner access denied.');
+        }
+
+        if ($plugin->isQueryRunnerReadOnly() && ! $this->isReadOnlySql($sql)) {
+            throw new \InvalidArgumentException('Only read-only SQL is permitted.');
+        }
+    }
+
     // ─── Lifecycle ─────────────────────────────────────────────
 
     public function mount(): void
@@ -1253,24 +1268,20 @@ class DatabaseManager extends Page implements HasTable
         $this->sqlResults = [];
         $this->sqlError = '';
 
-        if (!$plugin->isQueryRunnerEnabled()) {
+        if (! $plugin->isQueryRunnerEnabled()) {
             $this->sqlError = 'SQL runner is disabled.';
             return;
         }
 
-        $normalized = strtoupper(trim($this->sqlQuery));
-        $isRead = str_starts_with($normalized, 'SELECT') ||
-            str_starts_with($normalized, 'SHOW ') ||
-            str_starts_with($normalized, 'DESCRIBE ') ||
-            str_starts_with($normalized, 'EXPLAIN ');
+        $isRead = $this->isReadOnlySql($this->sqlQuery);
 
-        if ($plugin->isQueryRunnerReadOnly() && !$isRead) {
-            $this->sqlError = 'SQL runner is in read-only mode: only SELECT queries are allowed.';
+        if ($plugin->isQueryRunnerReadOnly() && ! $isRead) {
+            $this->sqlError = 'SQL runner is in read-only mode: only read-only queries are allowed.';
             return;
         }
 
-        if ($plugin->isReadOnly() && !$isRead) {
-            $this->sqlError = 'Read-only mode: only SELECT queries are allowed.';
+        if ($plugin->isReadOnly() && ! $isRead) {
+            $this->sqlError = 'Read-only mode: only read-only queries are allowed.';
             return;
         }
 

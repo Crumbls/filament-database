@@ -10,6 +10,8 @@ use Illuminate\Support\Facades\Schema;
 
 trait InteractsWithDatabase
 {
+    private const MAX_SQL_RESULT_ROWS = 500;
+
     protected function canAccessDatabaseTable(string $table, ?string $connection): bool
     {
         return true;
@@ -26,6 +28,41 @@ trait InteractsWithDatabase
         bool $mustExist = true,
     ): void {
         $this->authorizeDatabaseConnection($connection);
+    }
+
+    protected function authorizeSqlQuery(string $sql, ?string $connection): void
+    {
+        $this->authorizeDatabaseConnection($connection);
+    }
+
+    protected function isReadOnlySql(string $sql): bool
+    {
+        $sql = trim($sql);
+
+        if (
+            $sql === ''
+            || preg_match('/;\s*\S/s', $sql) === 1
+            || preg_match(
+                '/\b(?:INTO|FOR\s+(?:UPDATE|NO\s+KEY\s+UPDATE|SHARE|KEY\s+SHARE)|LOCK\s+IN\s+SHARE\s+MODE)\b/i',
+                $sql,
+            ) === 1
+        ) {
+            return false;
+        }
+
+        return match (true) {
+            preg_match('/\A(?:SELECT|SHOW|DESCRIBE)\b/is', $sql) === 1 => true,
+            preg_match(
+                '/\AEXPLAIN(?:\s+(?:QUERY\s+PLAN|ANALYZE))?\s+SELECT\b/is',
+                $sql,
+            ) === 1 => true,
+            default => false,
+        };
+    }
+
+    protected function sqlReturnsRows(string $sql): bool
+    {
+        return preg_match('/\A(?:SELECT|SHOW|DESCRIBE|EXPLAIN)\b/is', trim($sql)) === 1;
     }
 
     public function getAvailableConnections(): array
@@ -131,18 +168,22 @@ trait InteractsWithDatabase
 
     public function runQuery(string $sql, ?string $connection = null): array
     {
-        $this->authorizeDatabaseConnection($connection);
+        $this->authorizeSqlQuery($sql, $connection);
 
         $sql = trim($sql);
-        $normalized = strtoupper($sql);
 
-        if (
-            str_starts_with($normalized, 'SELECT') ||
-            str_starts_with($normalized, 'SHOW ') ||
-            str_starts_with($normalized, 'DESCRIBE ') ||
-            str_starts_with($normalized, 'EXPLAIN ')
-        ) {
-            return DB::connection($connection)->select($sql);
+        if ($this->sqlReturnsRows($sql)) {
+            $rows = [];
+
+            foreach (DB::connection($connection)->cursor($sql) as $row) {
+                $rows[] = $row;
+
+                if (count($rows) >= self::MAX_SQL_RESULT_ROWS) {
+                    break;
+                }
+            }
+
+            return $rows;
         }
 
         return [['affected_rows' => DB::connection($connection)->statement($sql)]];

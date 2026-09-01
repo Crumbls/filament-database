@@ -19,6 +19,11 @@ describe('SQL Runner', function () {
             {
                 return 'id';
             }
+
+            public function queryIsReadOnly(string $sql): bool
+            {
+                return $this->isReadOnlySql($sql);
+            }
         };
         $this->seedTestData();
     });
@@ -47,6 +52,45 @@ describe('SQL Runner', function () {
     it('throws on invalid SQL', function () {
         $this->db->runQuery('SELECT * FROM nonexistent_table', 'testing');
     })->throws(\Illuminate\Database\QueryException::class);
+
+    it('caps result sets before they are hydrated into Livewire state', function () {
+        $rows = [];
+
+        for ($index = 0; $index < 550; $index++) {
+            $rows[] = [
+                'name' => "Category {$index}",
+                'created_at' => now(),
+                'updated_at' => now(),
+            ];
+        }
+
+        DB::connection('testing')->table('categories')->insert($rows);
+
+        expect($this->db->runQuery('SELECT * FROM categories', 'testing'))
+            ->toHaveCount(500);
+    });
+
+    it('accepts only explicitly safe read-only statement shapes', function (string $sql) {
+        expect($this->db->queryIsReadOnly($sql))->toBeTrue();
+    })->with([
+        'select' => 'SELECT * FROM users',
+        'show' => 'SHOW TABLES',
+        'describe' => 'DESCRIBE users',
+        'explain select' => 'EXPLAIN SELECT * FROM users',
+        'sqlite explain select' => 'EXPLAIN QUERY PLAN SELECT * FROM users',
+        'PostgreSQL explain analyze select' => 'EXPLAIN ANALYZE SELECT * FROM users',
+    ]);
+
+    it('rejects read-only statement bypasses', function (string $sql) {
+        expect($this->db->queryIsReadOnly($sql))->toBeFalse();
+    })->with([
+        'write' => 'DELETE FROM users',
+        'write through explain analyze' => 'EXPLAIN ANALYZE DELETE FROM users',
+        'stacked statement' => 'SELECT * FROM users; DELETE FROM users',
+        'select into' => 'SELECT * INTO archived_users FROM users',
+        'locking select' => 'SELECT * FROM users FOR UPDATE',
+        'share-locking select' => 'SELECT * FROM users FOR SHARE',
+    ]);
 
     describe('Plugin read-only controls', function () {
 

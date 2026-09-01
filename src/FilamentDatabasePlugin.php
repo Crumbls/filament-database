@@ -261,7 +261,7 @@ class FilamentDatabasePlugin implements Plugin
 
     public function isQueryRunnerReadOnly(): bool
     {
-        return $this->queryRunnerReadOnly || $this->readOnly;
+        return $this->queryRunnerReadOnly || $this->isReadOnly();
     }
 
     // ════════════════════════════════════════════════════════════
