@@ -3,97 +3,73 @@
 declare(strict_types=1);
 
 use Crumbls\FilamentDatabase\Concerns\InteractsWithDatabase;
-use Illuminate\Support\Facades\DB;
+use Crumbls\FilamentDatabase\Support\ExplainQuery;
 
-describe('SQL EXPLAIN Functionality', function () {
-
+describe('SQL EXPLAIN functionality', function () {
     beforeEach(function () {
         $this->seedTestData();
-        
+
         $this->explainer = new class {
             use InteractsWithDatabase;
-
-            public string $activeConnection = 'testing';
         };
     });
 
-    it('executes EXPLAIN on SELECT query and returns results', function () {
-        $query = 'SELECT * FROM users WHERE name = "Alice"';
-        $driver = $this->explainer->getDriverName('testing');
-        
-        if ($driver === 'sqlite') {
-            $explainQuery = "EXPLAIN QUERY PLAN {$query}";
-        } else {
-            $explainQuery = "EXPLAIN {$query}";
-        }
-        
-        $results = $this->explainer->runQuery($explainQuery, 'testing');
+    it('builds the driver-specific statement and output format', function (
+        string $driver,
+        string $type,
+        string $expectedSql,
+        string $expectedFormat,
+    ) {
+        $query = ExplainQuery::build($driver, 'SELECT * FROM users', $type);
 
-        expect($results)->toBeArray()
-            ->and($results)->not->toBeEmpty();
+        expect($query->sql)->toBe($expectedSql)
+            ->and($query->format)->toBe($expectedFormat);
+    })->with([
+        'MySQL EXPLAIN' => ['mysql', 'explain', 'EXPLAIN SELECT * FROM users', 'table'],
+        'MySQL ANALYZE' => ['mysql', 'analyze', 'EXPLAIN ANALYZE SELECT * FROM users', 'text'],
+        'MariaDB EXPLAIN' => ['mariadb', 'explain', 'EXPLAIN SELECT * FROM users', 'table'],
+        'PostgreSQL EXPLAIN' => ['pgsql', 'explain', 'EXPLAIN SELECT * FROM users', 'text'],
+        'PostgreSQL ANALYZE' => ['pgsql', 'analyze', 'EXPLAIN ANALYZE SELECT * FROM users', 'text'],
+        'SQLite EXPLAIN' => ['sqlite', 'explain', 'EXPLAIN QUERY PLAN SELECT * FROM users', 'table'],
+        'SQLite ANALYZE fallback' => ['sqlite', 'analyze', 'EXPLAIN QUERY PLAN SELECT * FROM users', 'table'],
+    ]);
+
+    it('executes and formats a SQLite query plan', function () {
+        $query = ExplainQuery::build(
+            'sqlite',
+            'SELECT users.name FROM users JOIN posts ON users.id = posts.user_id',
+        );
+        $results = $this->explainer->runQuery($query->sql, 'testing');
+        $formatted = $query->formatResults($results);
+
+        expect($formatted)->not->toBeEmpty()
+            ->and($formatted[0])->toBeArray()
+            ->and($formatted[0])->toHaveKeys(['id', 'parent', 'detail']);
     });
 
-    it('handles non-SELECT query with EXPLAIN gracefully', function () {
-        // EXPLAIN only works with SELECT - this tests the validation
-        $query = 'INSERT INTO users (name, email, password) VALUES ("Test", "test@example.com", "secret")';
-        
-        // Should not use EXPLAIN prefix
-        $upper = strtoupper(trim(substr($query, 0, 6)));
-        expect($upper)->not->toBe('SELECT');
+    it('normalizes text plans without leaking driver-specific row shapes', function () {
+        $postgres = ExplainQuery::build('pgsql', 'SELECT * FROM users');
+        $mysql = ExplainQuery::build('mysql', 'SELECT * FROM users', 'analyze');
+
+        expect($postgres->formatResults([
+            (object) ['QUERY PLAN' => 'Index Scan'],
+            (object) ['QUERY PLAN' => 'Filter'],
+        ]))->toBe(['Index Scan', 'Filter'])
+            ->and($mysql->formatResults([
+                (object) ['EXPLAIN' => 'Nested loop'],
+            ]))->toBe(['Nested loop']);
     });
 
-    it('detects correct EXPLAIN format for SQLite', function () {
-        $driver = $this->explainer->getDriverName('testing');
-        
-        expect($driver)->toBe('sqlite');
-        
-        // SQLite should use EXPLAIN QUERY PLAN
-        $query = 'SELECT * FROM users';
-        $explainQuery = "EXPLAIN QUERY PLAN {$query}";
-        
-        $results = $this->explainer->runQuery($explainQuery, 'testing');
-        expect($results)->toBeArray();
-    });
-
-    it('uses EXPLAIN QUERY PLAN for SQLite', function () {
-        $query = 'SELECT * FROM posts WHERE user_id = 1';
-        $explainQuery = "EXPLAIN QUERY PLAN {$query}";
-
-        $results = $this->explainer->runQuery($explainQuery, 'testing');
-
-        // Should have results (SQLite uses EXPLAIN QUERY PLAN)
-        expect($results)->toBeArray()
-            ->and($results)->not->toBeEmpty();
-    });
-
-    it('handles complex SELECT queries with joins', function () {
-        $query = 'SELECT u.name, p.title FROM users u JOIN posts p ON u.id = p.user_id';
-        $explainQuery = "EXPLAIN QUERY PLAN {$query}";
-
-        $results = $this->explainer->runQuery($explainQuery, 'testing');
-
-        expect($results)->toBeArray()
-            ->and($results)->not->toBeEmpty();
-    });
-
-    it('works with subqueries', function () {
-        $query = 'SELECT * FROM users WHERE id IN (SELECT user_id FROM posts)';
-        $explainQuery = "EXPLAIN QUERY PLAN {$query}";
-
-        $results = $this->explainer->runQuery($explainQuery, 'testing');
-
-        expect($results)->toBeArray()
-            ->and($results)->not->toBeEmpty();
-    });
-
-    it('validates query format before running EXPLAIN', function () {
-        $selectQuery = 'SELECT * FROM users';
-        $insertQuery = 'INSERT INTO users (name, email, password) VALUES ("Test", "test@example.com", "secret")';
-        
-        $selectUpper = strtoupper(trim(substr($selectQuery, 0, 6)));
-        $insertUpper = strtoupper(trim(substr($insertQuery, 0, 6)));
-        
-        expect($selectUpper)->toBe('SELECT');
-        expect($insertUpper)->toBe('INSERT');
-    });
+    it('rejects unsupported statements, modes, and drivers', function (
+        string $driver,
+        string $sql,
+        string $type,
+    ) {
+        expect(fn () => ExplainQuery::build($driver, $sql, $type))
+            ->toThrow(InvalidArgumentException::class);
+    })->with([
+        'write statement' => ['sqlite', 'DELETE FROM users', 'explain'],
+        'unknown mode' => ['sqlite', 'SELECT * FROM users', 'profile'],
+        'unsupported driver' => ['mongodb', 'SELECT * FROM users', 'explain'],
+    ]);
 });

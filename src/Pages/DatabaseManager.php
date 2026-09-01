@@ -13,6 +13,7 @@ use Crumbls\FilamentDatabase\FilamentDatabasePlugin;
 use Crumbls\FilamentDatabase\Models\DynamicModel;
 use Crumbls\FilamentDatabase\Repositories\DatabaseMetadataRepository;
 use Crumbls\FilamentDatabase\Support\DatabaseLog;
+use Crumbls\FilamentDatabase\Support\ExplainQuery;
 use Crumbls\FilamentDatabase\Support\SqlInsertStatement;
 use Filament\Pages\Page;
 use Filament\Notifications\Notification;
@@ -1446,69 +1447,19 @@ class DatabaseManager extends Page implements HasTable
 
         try {
             $driver = $this->getDriverName($this->activeConnection);
-            
-            // Build the EXPLAIN query based on driver and type
-            switch ($driver) {
-                case 'mysql':
-                    if ($this->explainType === 'analyze') {
-                        // MySQL 8.0.18+ supports EXPLAIN ANALYZE
-                        $explainQuery = "EXPLAIN ANALYZE {$trimmedQuery}";
-                        $this->explainFormat = 'text';
-                    } else {
-                        $explainQuery = "EXPLAIN {$trimmedQuery}";
-                        $this->explainFormat = 'table';
-                    }
-                    break;
-
-                case 'pgsql':
-                    if ($this->explainType === 'analyze') {
-                        $explainQuery = "EXPLAIN ANALYZE {$trimmedQuery}";
-                        $this->explainFormat = 'text';
-                    } else {
-                        $explainQuery = "EXPLAIN {$trimmedQuery}";
-                        $this->explainFormat = 'text';
-                    }
-                    break;
-
-                case 'sqlite':
-                    // SQLite only has EXPLAIN QUERY PLAN (no ANALYZE option)
-                    $explainQuery = "EXPLAIN QUERY PLAN {$trimmedQuery}";
-                    $this->explainFormat = 'table';
-                    break;
-
-                default:
-                    $this->sqlError = "EXPLAIN is not supported for driver: {$driver}";
-                    return;
-            }
+            $explainQuery = ExplainQuery::build($driver, $trimmedQuery, $this->explainType);
+            $this->explainFormat = $explainQuery->format;
 
             if ($plugin->shouldLogQueries()) {
                 Log::info('[filament-database] EXPLAIN requested', [
                     'user' => auth()->id(),
                     'connection' => $this->activeConnection,
-                    ...DatabaseLog::queryContext($explainQuery),
+                    ...DatabaseLog::queryContext($explainQuery->sql),
                 ]);
             }
 
-            $results = $this->runQuery($explainQuery, $this->activeConnection);
-            
-            // For PostgreSQL EXPLAIN output, convert to text format
-            if ($driver === 'pgsql' && $this->explainFormat === 'text') {
-                $textResults = [];
-                foreach ($results as $row) {
-                    $row = (array) $row;
-                    $textResults[] = $row['QUERY PLAN'] ?? reset($row);
-                }
-                $this->explainResults = $textResults;
-            } else {
-                // For MySQL EXPLAIN ANALYZE (text output)
-                if ($driver === 'mysql' && $this->explainType === 'analyze' && isset($results[0])) {
-                    $row = (array) $results[0];
-                    $this->explainResults = [reset($row)];
-                } else {
-                    // Table format for MySQL EXPLAIN and SQLite EXPLAIN QUERY PLAN
-                    $this->explainResults = array_map(fn($r) => (array) $r, $results);
-                }
-            }
+            $results = $this->runQuery($explainQuery->sql, $this->activeConnection);
+            $this->explainResults = $explainQuery->formatResults($results);
 
             Notification::make()
                 ->title('Query explained successfully')
