@@ -545,8 +545,8 @@ trait InteractsWithDatabase
      */
     public function generateMigration(array $diff, string $migrationName = 'schema_changes'): string
     {
-        $className = 'Migrate' . str_replace(' ', '', ucwords(str_replace('_', ' ', $migrationName)));
-        $code = "<?php\n\nuse Illuminate\\Database\\Migrations\\Migration;\n";
+        $code = "<?php\n\ndeclare(strict_types=1);\n\n";
+        $code .= "use Illuminate\\Database\\Migrations\\Migration;\n";
         $code .= "use Illuminate\\Database\\Schema\\Blueprint;\n";
         $code .= "use Illuminate\\Support\\Facades\\Schema;\n\n";
         $code .= "return new class extends Migration\n{\n";
@@ -554,8 +554,11 @@ trait InteractsWithDatabase
 
         // Create new tables
         foreach ($diff['tables_added'] as $table) {
-            $code .= "        // TODO: Define schema for new table '{$table}'\n";
-            $code .= "        // Schema::create('{$table}', function (Blueprint \$table) {\n";
+            $tableLiteral = $this->phpLiteral((string) $table);
+            $commentLiteral = str_replace(["\r", "\n"], ['\\r', '\\n'], $tableLiteral);
+
+            $code .= "        // TODO: Define schema for new table {$commentLiteral}\n";
+            $code .= "        // Schema::create({$commentLiteral}, function (Blueprint \$table) {\n";
             $code .= "        //     \$table->id();\n";
             $code .= "        //     \$table->timestamps();\n";
             $code .= "        // });\n\n";
@@ -564,7 +567,8 @@ trait InteractsWithDatabase
         // Modify existing tables
         foreach ($diff['tables_modified'] as $table => $changes) {
             $hasChanges = false;
-            $tableCode = "        Schema::table('{$table}', function (Blueprint \$table) {\n";
+            $tableLiteral = $this->phpLiteral((string) $table);
+            $tableCode = "        Schema::table({$tableLiteral}, function (Blueprint \$table) {\n";
 
             // Add columns
             foreach ($changes['columns_added'] as $col) {
@@ -575,7 +579,8 @@ trait InteractsWithDatabase
             // Drop columns
             foreach ($changes['columns_removed'] as $col) {
                 $hasChanges = true;
-                $tableCode .= "            \$table->dropColumn('{$col['name']}');\n";
+                $columnLiteral = $this->phpLiteral((string) $col['name']);
+                $tableCode .= "            \$table->dropColumn({$columnLiteral});\n";
             }
 
             // Modify columns
@@ -593,12 +598,14 @@ trait InteractsWithDatabase
             // Drop indexes
             foreach ($changes['indexes_removed'] as $idx) {
                 $hasChanges = true;
+                $indexLiteral = $this->phpLiteral((string) $idx['name']);
+
                 if ($idx['primary'] ?? false) {
-                    $tableCode .= "            \$table->dropPrimary('{$idx['name']}');\n";
+                    $tableCode .= "            \$table->dropPrimary({$indexLiteral});\n";
                 } elseif ($idx['unique'] ?? false) {
-                    $tableCode .= "            \$table->dropUnique('{$idx['name']}');\n";
+                    $tableCode .= "            \$table->dropUnique({$indexLiteral});\n";
                 } else {
-                    $tableCode .= "            \$table->dropIndex('{$idx['name']}');\n";
+                    $tableCode .= "            \$table->dropIndex({$indexLiteral});\n";
                 }
             }
 
@@ -611,8 +618,9 @@ trait InteractsWithDatabase
             // Drop foreign keys
             foreach ($changes['foreign_keys_removed'] as $fk) {
                 $hasChanges = true;
-                if (!empty($fk['name'])) {
-                    $tableCode .= "            \$table->dropForeign('{$fk['name']}');\n";
+                if (! empty($fk['name'])) {
+                    $foreignKeyLiteral = $this->phpLiteral((string) $fk['name']);
+                    $tableCode .= "            \$table->dropForeign({$foreignKeyLiteral});\n";
                 }
             }
 
@@ -625,7 +633,8 @@ trait InteractsWithDatabase
 
         // Drop tables
         foreach ($diff['tables_removed'] as $table) {
-            $code .= "        Schema::dropIfExists('{$table}');\n";
+            $tableLiteral = $this->phpLiteral((string) $table);
+            $code .= "        Schema::dropIfExists({$tableLiteral});\n";
         }
 
         $code .= "    }\n\n";
@@ -643,16 +652,16 @@ trait InteractsWithDatabase
     protected function generateColumnDefinition(array $column, string $indent = '', bool $isChange = false): string
     {
         $type = $this->mapDbTypeToMigrationType($column['type']);
-        $name = $column['name'];
+        $name = $this->phpLiteral((string) $column['name']);
 
-        $line = "{$indent}\$table->{$type}('{$name}')";
+        $line = "{$indent}\$table->{$type}({$name})";
 
         if ($column['nullable'] ?? false) {
             $line .= "->nullable()";
         }
 
         if (isset($column['default']) && $column['default'] !== null) {
-            $default = is_string($column['default']) ? "'{$column['default']}'" : $column['default'];
+            $default = $this->phpLiteral($column['default']);
             $line .= "->default({$default})";
         }
 
@@ -670,15 +679,15 @@ trait InteractsWithDatabase
      */
     protected function generateIndexDefinition(array $index, string $indent = ''): string
     {
-        $columns = $index['columns'] ?? [];
-        $columnsStr = "'" . implode("', '", $columns) . "'";
+        $columns = array_map('strval', $index['columns'] ?? []);
+        $columnsLiteral = $this->phpLiteral(array_values($columns));
 
         if ($index['primary'] ?? false) {
-            return "{$indent}\$table->primary([{$columnsStr}]);\n";
+            return "{$indent}\$table->primary({$columnsLiteral});\n";
         } elseif ($index['unique'] ?? false) {
-            return "{$indent}\$table->unique([{$columnsStr}]);\n";
+            return "{$indent}\$table->unique({$columnsLiteral});\n";
         } else {
-            return "{$indent}\$table->index([{$columnsStr}]);\n";
+            return "{$indent}\$table->index({$columnsLiteral});\n";
         }
     }
 
@@ -687,14 +696,15 @@ trait InteractsWithDatabase
      */
     protected function generateForeignKeyDefinition(array $fk, string $indent = ''): string
     {
-        $columns = $fk['columns'] ?? [];
-        $foreignTable = $fk['foreign_table'] ?? '';
-        $foreignColumns = $fk['foreign_columns'] ?? [];
+        $columns = array_map('strval', $fk['columns'] ?? []);
+        $foreignTable = $this->phpLiteral((string) ($fk['foreign_table'] ?? ''));
+        $foreignColumns = array_map('strval', $fk['foreign_columns'] ?? []);
 
-        $columnsStr = "'" . implode("', '", $columns) . "'";
-        $foreignColumnsStr = "'" . implode("', '", $foreignColumns) . "'";
+        $columnsLiteral = $this->phpLiteral(array_values($columns));
+        $foreignColumnsLiteral = $this->phpLiteral(array_values($foreignColumns));
 
-        $line = "{$indent}\$table->foreign([{$columnsStr}])->references([{$foreignColumnsStr}])->on('{$foreignTable}')";
+        $line = "{$indent}\$table->foreign({$columnsLiteral})"
+            . "->references({$foreignColumnsLiteral})->on({$foreignTable})";
 
         if (!empty($fk['on_delete'])) {
             $action = strtolower($fk['on_delete']);
@@ -721,6 +731,11 @@ trait InteractsWithDatabase
         $line .= ";\n";
 
         return $line;
+    }
+
+    protected function phpLiteral(mixed $value): string
+    {
+        return var_export($value, true);
     }
 
     /**

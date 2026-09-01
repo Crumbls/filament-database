@@ -60,7 +60,7 @@ public function panel(Panel $panel): Panel
 - **SQL runner** — execute raw queries with tabular results, query history, and Cmd/Ctrl+Enter shortcut
 - **Query EXPLAIN** — EXPLAIN/ANALYZE support for MySQL, PostgreSQL, and SQLite
 - **Schema snapshots** — capture your entire database schema as JSON, compare against previous snapshots with color-coded diffs
-- **Migration generator** — generate Laravel migration code from schema diffs, copy or save directly to `database/migrations/`
+- **Migration generator** — generate Laravel migration code from schema diffs for review and download
 - **Export** — download table data as CSV, JSON, or SQL INSERT statements
 - **Import** — upload CSV files with automatic column mapping
 - **Table operations** — create, truncate, drop tables with confirmation dialogs

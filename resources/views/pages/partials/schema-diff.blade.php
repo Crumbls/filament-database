@@ -211,15 +211,13 @@
                                     >
                                         Copy
                                     </x-filament::button>
-                                    @if(!$this->isReadOnly())
-                                        <x-filament::button
-                                            size="sm"
-                                            color="primary"
-                                            wire:click="saveMigrationFile"
-                                        >
-                                            Save to database/migrations/
-                                        </x-filament::button>
-                                    @endif
+                                    <x-filament::button
+                                        size="sm"
+                                        color="primary"
+                                        wire:click="downloadMigrationFile"
+                                    >
+                                        Download Migration
+                                    </x-filament::button>
                                 </div>
                             </div>
                             <pre style="background: var(--gray-900); color: var(--gray-100); padding: 1rem; border-radius: 0.5rem; overflow-x: auto; font-size: 0.75rem; line-height: 1.5; max-height: 300px;"><code>{{ $generatedMigration }}</code></pre>

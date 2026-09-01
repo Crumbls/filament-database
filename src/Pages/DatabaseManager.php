@@ -28,6 +28,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Livewire\Attributes\Locked;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 use UnitEnum;
 
 class DatabaseManager extends Page implements HasTable
@@ -76,8 +77,14 @@ class DatabaseManager extends Page implements HasTable
 
     // Schema snapshots
     public bool $showSchemaDiff = false;
+
+    #[Locked]
     public ?array $selectedSnapshot = null;
+
+    #[Locked]
     public ?array $schemaDiff = null;
+
+    #[Locked]
     public string $generatedMigration = '';
 
     // Legacy — kept for backwards compat but modals are now native Filament actions
@@ -1510,8 +1517,11 @@ class DatabaseManager extends Page implements HasTable
 
     public function generateMigrationCode(): void
     {
-        if (!$this->schemaDiff) {
+        $this->authorizeDatabaseConnection($this->activeConnection);
+
+        if (! $this->schemaDiff) {
             Notification::make()->title('No diff available')->warning()->send();
+
             return;
         }
 
@@ -1522,48 +1532,23 @@ class DatabaseManager extends Page implements HasTable
         }
     }
 
-    public function saveMigrationFile(): void
+    public function downloadMigrationFile(): StreamedResponse
     {
-        $plugin = static::getPlugin();
+        $this->authorizeDatabaseConnection($this->activeConnection);
 
-        if ($plugin->isReadOnly()) {
-            Notification::make()->title('Read-only mode: cannot save migration file')->warning()->send();
-            return;
+        if ($this->schemaDiff === null) {
+            throw new \LogicException('No schema diff is available.');
         }
 
-        if (empty($this->generatedMigration)) {
-            Notification::make()->title('No migration generated')->warning()->send();
-            return;
-        }
+        $migration = $this->generateMigration($this->schemaDiff, 'schema_changes');
+        $filename = now()->format('Y_m_d_His') . '_schema_changes.php';
 
-        try {
-            $migrationsPath = database_path('migrations');
-            
-            if (!is_dir($migrationsPath)) {
-                mkdir($migrationsPath, 0755, true);
-            }
-
-            $timestamp = date('Y_m_d_His');
-            $filename = "{$timestamp}_schema_changes.php";
-            $filepath = $migrationsPath . '/' . $filename;
-
-            file_put_contents($filepath, $this->generatedMigration);
-
-            if ($plugin->shouldLogChanges()) {
-                Log::info('[filament-database] Migration file created', [
-                    'user' => auth()->id(),
-                    'connection' => $this->activeConnection,
-                    'file' => $filename,
-                ]);
-            }
-
-            Notification::make()
-                ->title('Migration saved')
-                ->body("Saved to: database/migrations/{$filename}")
-                ->success()
-                ->send();
-        } catch (\Throwable $e) {
-            Notification::make()->title('Save failed')->body($e->getMessage())->danger()->send();
-        }
+        return response()->streamDownload(
+            static function () use ($migration): void {
+                echo $migration;
+            },
+            $filename,
+            ['Content-Type' => 'text/x-php'],
+        );
     }
 }

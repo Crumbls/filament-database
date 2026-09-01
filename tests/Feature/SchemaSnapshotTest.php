@@ -276,6 +276,58 @@ describe('Schema Snapshots and Comparison', function () {
             expect($migration)->toContain('Schema::dropIfExists')
                 ->and($migration)->toContain('old_table');
         });
+
+        it('keeps hostile schema values inside PHP literals', function () {
+            $payload = "users'); file_put_contents('/tmp/owned', 'yes'); //\nnext_line";
+            $diff = [
+                'tables_added' => [$payload],
+                'tables_removed' => [$payload],
+                'tables_modified' => [
+                    $payload => [
+                        'columns_added' => [[
+                            'name' => $payload,
+                            'type' => 'varchar',
+                            'nullable' => false,
+                            'default' => $payload,
+                            'auto_increment' => false,
+                        ]],
+                        'columns_removed' => [['name' => $payload]],
+                        'columns_modified' => [],
+                        'indexes_added' => [[
+                            'name' => $payload,
+                            'columns' => [$payload],
+                            'unique' => true,
+                            'primary' => false,
+                        ]],
+                        'indexes_removed' => [[
+                            'name' => $payload,
+                            'unique' => false,
+                            'primary' => false,
+                        ]],
+                        'foreign_keys_added' => [[
+                            'name' => $payload,
+                            'columns' => [$payload],
+                            'foreign_table' => $payload,
+                            'foreign_columns' => [$payload],
+                            'on_update' => null,
+                            'on_delete' => null,
+                        ]],
+                        'foreign_keys_removed' => [['name' => $payload]],
+                    ],
+                ],
+            ];
+
+            $migration = $this->db->generateMigration($diff, $payload);
+            $tokens = PhpToken::tokenize($migration, TOKEN_PARSE);
+            $executableCalls = array_filter(
+                $tokens,
+                static fn (PhpToken $token): bool => $token->id === T_STRING
+                    && $token->text === 'file_put_contents',
+            );
+
+            expect($migration)->toContain('declare(strict_types=1);')
+                ->and($executableCalls)->toBe([]);
+        });
     });
 
     describe('Snapshot save and load', function () {
