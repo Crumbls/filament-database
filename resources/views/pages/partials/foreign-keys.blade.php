@@ -23,7 +23,7 @@
                     <td>{{ $fk['on_delete'] ?? '—' }}</td>
                 </tr>
             @empty
-                <tr><td colspan="6" class="fdb-empty-cell">No foreign keys.</td></tr>
+                <tr><td colspan="6" class="fdb-empty-cell">No foreign key constraints are defined for this table.</td></tr>
             @endforelse
         </tbody>
     </table>

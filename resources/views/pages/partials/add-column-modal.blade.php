@@ -1,20 +1,20 @@
 <div class="fdb-modal-overlay" wire:click.self="$set('showAddColumn', false)">
-    <div class="fdb-modal fdb-modal-sm">
-        <h3>Add Column to {{ $activeTable }}</h3>
+    <div class="fdb-modal fdb-modal-sm" role="dialog" aria-modal="true" aria-labelledby="fdb-add-column-title" tabindex="-1" x-data x-ref="dialog" x-trap.noscroll="true" x-init="$nextTick(() => $refs.dialog.focus())" x-on:keydown.escape.window="$wire.set('showAddColumn', false)">
+        <h3 id="fdb-add-column-title">Add Column to {{ $activeTable }}</h3>
 
         <div class="fdb-field">
-            <label>Name</label>
+            <label for="fdb-column-name">Name</label>
             <x-filament::input.wrapper>
-                <x-filament::input type="text" wire:model="newColumnName" />
+                <x-filament::input id="fdb-column-name" type="text" wire:model="newColumnName" />
             </x-filament::input.wrapper>
             @error('newColumnName')
                 <p class="text-sm text-danger-600">{{ $message }}</p>
             @enderror
         </div>
         <div class="fdb-field">
-            <label>Type</label>
+            <label for="fdb-column-type">Type</label>
             <x-filament::input.wrapper>
-                <x-filament::input.select wire:model="newColumnType">
+                <x-filament::input.select id="fdb-column-type" wire:model="newColumnType">
                     @foreach($this->getColumnTypes() as $type)
                         <option value="{{ $type }}">{{ $type }}</option>
                     @endforeach
@@ -30,9 +30,9 @@
             </label>
         </div>
         <div class="fdb-field">
-            <label>Default (optional)</label>
+            <label for="fdb-column-default">Default (optional)</label>
             <x-filament::input.wrapper>
-                <x-filament::input type="text" wire:model="newColumnDefault" />
+                <x-filament::input id="fdb-column-default" type="text" wire:model="newColumnDefault" />
             </x-filament::input.wrapper>
         </div>
 

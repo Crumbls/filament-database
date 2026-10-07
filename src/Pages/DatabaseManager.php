@@ -60,11 +60,12 @@ class DatabaseManager extends Page implements HasTable
     #[Locked]
     public string $activeTable = '';
 
-    public string $activeTab = 'rows';
+    public string $activeTab = 'overview';
     public string $tableFilter = '';
     public string $sqlQuery = '';
     public array $sqlResults = [];
     public string $sqlError = '';
+    public ?string $sqlStatus = null;
     public array $sqlHistory = [];
     public array $explainResults = [];
     public string $explainFormat = 'table'; // 'table' or 'text'
@@ -279,11 +280,26 @@ class DatabaseManager extends Page implements HasTable
 
         $this->activeConnection = $connection;
         $this->activeTable = '';
+        $this->activeTab = 'overview';
+        $this->tableFilter = '';
+        $this->sqlQuery = '';
+        $this->sqlResults = [];
+        $this->sqlError = '';
+        $this->sqlStatus = null;
+        $this->explainResults = [];
         $this->resetTable();
     }
 
     public function selectTable(string $table): void
     {
+        if ($table === '') {
+            $this->activeTable = '';
+            $this->activeTab = 'overview';
+            $this->resetTable();
+
+            return;
+        }
+
         $this->authorizeDatabaseTable($table, $this->activeConnection);
 
         $this->activeTable = $table;
@@ -295,9 +311,22 @@ class DatabaseManager extends Page implements HasTable
     {
         $plugin = static::getPlugin();
 
-        if ($tab === 'sql' && !$plugin->isQueryRunnerEnabled()) {
+        $tabs = $this->activeTable
+            ? ['overview', 'rows', 'structure', 'indexes', 'foreign-keys', 'relationships', 'sql']
+            : ['overview', 'sql'];
+
+        if (! in_array($tab, $tabs, true)) {
+            return;
+        }
+
+        if ($tab === 'sql' && ! $plugin->isQueryRunnerEnabled()) {
             Notification::make()->title('SQL runner is disabled.')->warning()->send();
             return;
+        }
+
+        if ($tab === 'overview' && $this->activeTable !== '') {
+            $this->activeTable = '';
+            $this->resetTable();
         }
 
         $this->activeTab = $tab;
@@ -411,11 +440,14 @@ class DatabaseManager extends Page implements HasTable
         }
 
         $actions = [];
-        $headerActions = [];
+        $schemaActions = [];
+        $transferActions = [];
+        $dangerActions = [];
+        $insertAction = null;
 
         // Schema Snapshot action (database-level, always available since it's read-only)
         if ($this->activeConnection && $this->isConnectionHealthy($this->activeConnection)) {
-            $headerActions[] = Action::make('snapshotSchema')
+            $schemaActions[] = Action::make('snapshotSchema')
                 ->label('Snapshot Schema')
                 ->icon('heroicon-m-camera')
                 ->color('primary')
@@ -460,7 +492,7 @@ class DatabaseManager extends Page implements HasTable
                     }
                 });
 
-            $headerActions[] = Action::make('compareSchema')
+            $schemaActions[] = Action::make('compareSchema')
                 ->label('Compare Schema')
                 ->icon('heroicon-m-arrows-right-left')
                 ->color('gray')
@@ -531,7 +563,7 @@ class DatabaseManager extends Page implements HasTable
 
         // Export action (always available, even in read-only mode)
         if ($this->activeTable) {
-            $headerActions[] = Action::make('export')
+            $transferActions[] = Action::make('export')
                 ->label('Export')
                 ->icon('heroicon-m-arrow-down-tray')
                 ->form([
@@ -569,7 +601,7 @@ class DatabaseManager extends Page implements HasTable
 
         // Import action (blocked in read-only mode)
         if (! $plugin->isReadOnly() && $this->activeTable) {
-            $headerActions[] = Action::make('import')
+            $transferActions[] = Action::make('import')
                 ->label('Import')
                 ->icon('heroicon-m-arrow-up-tray')
                 ->form([
@@ -773,7 +805,7 @@ class DatabaseManager extends Page implements HasTable
             $dbColumns ??= $this->getColumns($this->activeTable, $this->activeConnection);
             $foreignKeys ??= $this->getForeignKeys($this->activeTable, $this->activeConnection);
 
-            $headerActions[] = Action::make('insert')
+            $insertAction = Action::make('insert')
                 ->label('Insert Row')
                 ->icon('heroicon-m-plus')
                 ->modalHeading("Insert into '{$this->activeTable}'")
@@ -808,13 +840,13 @@ class DatabaseManager extends Page implements HasTable
 
         // Table-level destructive actions in header
         if (!$plugin->isReadOnly() && !$plugin->isDestructivePrevented() && $this->activeTable) {
-            $headerActions[] = Action::make('truncate')
+            $dangerActions[] = Action::make('truncate')
                 ->label('Truncate')
                 ->icon('heroicon-m-archive-box-x-mark')
                 ->color('danger')
                 ->requiresConfirmation()
                 ->modalHeading("Truncate '{$this->activeTable}'")
-                ->modalDescription('This will permanently remove all rows from the table. This cannot be undone.')
+                ->modalDescription($this->destructiveActionDescription('This will permanently remove all rows from the table.'))
                 ->modalSubmitActionLabel('Yes, truncate')
                 ->action(function () use ($plugin) {
                     try {
@@ -838,19 +870,20 @@ class DatabaseManager extends Page implements HasTable
                     }
                 });
 
-            $headerActions[] = Action::make('drop')
+            $dangerActions[] = Action::make('drop')
                 ->label('Drop')
                 ->icon('heroicon-m-trash')
                 ->color('danger')
                 ->requiresConfirmation()
                 ->modalHeading("Drop '{$this->activeTable}'")
-                ->modalDescription('This will permanently delete the entire table and all its data. This cannot be undone.')
+                ->modalDescription($this->destructiveActionDescription('This will permanently delete the entire table and all its data.'))
                 ->modalSubmitActionLabel('Yes, drop table')
                 ->action(function () use ($plugin) {
                     try {
                         $table = $this->activeTable;
                         $this->dropTable($table, $this->activeConnection);
                         $this->activeTable = '';
+                        $this->activeTab = 'overview';
                         $this->resetTable();
 
                         if ($plugin->shouldLogChanges()) {
@@ -870,6 +903,36 @@ class DatabaseManager extends Page implements HasTable
                             ->send();
                     }
                 });
+        }
+
+        $headerActions = [];
+
+        if ($insertAction !== null) {
+            $headerActions[] = $insertAction;
+        }
+
+        if ($transferActions !== []) {
+            $headerActions[] = ActionGroup::make($transferActions)
+                ->label('Transfer data')
+                ->icon('heroicon-m-arrow-up-tray')
+                ->button()
+                ->color('gray');
+        }
+
+        if ($schemaActions !== []) {
+            $headerActions[] = ActionGroup::make($schemaActions)
+                ->label('Schema tools')
+                ->icon('heroicon-m-squares-2x2')
+                ->button()
+                ->color('gray');
+        }
+
+        if ($dangerActions !== []) {
+            $headerActions[] = ActionGroup::make($dangerActions)
+                ->label('Danger zone')
+                ->icon('heroicon-m-ellipsis-horizontal')
+                ->button()
+                ->color('gray');
         }
 
         $perPage = $plugin->getRowsPerPage();
@@ -980,7 +1043,9 @@ class DatabaseManager extends Page implements HasTable
             ->bulkActions($bulkActions)
             ->headerActions($headerActions)
             ->emptyStateHeading('No rows')
-            ->emptyStateDescription('This table has no data.')
+            ->emptyStateDescription($plugin->isReadOnly()
+                ? 'This table has no rows.'
+                : 'This table has no rows. Use Insert Row above to add the first one.')
             ->striped()
             ->paginated();
     }
@@ -1042,6 +1107,7 @@ class DatabaseManager extends Page implements HasTable
             $this->dropTable($table, $this->activeConnection);
             if ($this->activeTable === $table) {
                 $this->activeTable = '';
+                $this->activeTab = 'overview';
             }
 
             if ($plugin->shouldLogChanges()) {
@@ -1330,6 +1396,7 @@ class DatabaseManager extends Page implements HasTable
             $this->createTable($this->newTableName, $this->newTableColumns, $this->activeConnection);
             $this->showCreateTable = false;
             $this->activeTable = $this->newTableName;
+            $this->activeTab = 'rows';
 
             if ($plugin->shouldLogChanges()) {
                 Log::info('[filament-database] Table created', [
@@ -1355,7 +1422,9 @@ class DatabaseManager extends Page implements HasTable
     {
         $plugin = static::getPlugin();
         $this->sqlResults = [];
+        $this->explainResults = [];
         $this->sqlError = '';
+        $this->sqlStatus = null;
 
         if (! $plugin->isQueryRunnerEnabled()) {
             $this->sqlError = 'SQL runner is disabled.';
@@ -1387,15 +1456,19 @@ class DatabaseManager extends Page implements HasTable
             $results = $this->runQuery($this->sqlQuery, $this->activeConnection);
             $executionTime = round((microtime(true) - $startTime) * 1000, 2);
             $this->sqlResults = array_map(fn($r) => (array) $r, $results);
+            $this->sqlStatus = $isRead
+                ? (count($this->sqlResults) === 0 ? 'Query completed. No rows returned.' : 'Query completed. Showing ' . count($this->sqlResults) . ' rows.')
+                : 'Query completed.';
 
-            // Add to history (keep last 20)
-            array_unshift($this->sqlHistory, [
+            // Keep recent queries within their connection context.
+            $this->sqlHistory[$this->activeConnection] ??= [];
+            array_unshift($this->sqlHistory[$this->activeConnection], [
                 'query' => $this->sqlQuery,
                 'time' => now()->format('H:i:s'),
                 'rows' => count($this->sqlResults),
                 'duration' => $executionTime . 'ms',
             ]);
-            $this->sqlHistory = array_slice($this->sqlHistory, 0, 20);
+            $this->sqlHistory[$this->activeConnection] = array_slice($this->sqlHistory[$this->activeConnection], 0, 20);
         } catch (\Throwable $e) {
             $this->sqlError = $this->databaseFailureMessage(
                 'sql_execute',
@@ -1404,26 +1477,29 @@ class DatabaseManager extends Page implements HasTable
             );
 
             // Add failed query to history
-            array_unshift($this->sqlHistory, [
+            $this->sqlHistory[$this->activeConnection] ??= [];
+            array_unshift($this->sqlHistory[$this->activeConnection], [
                 'query' => $this->sqlQuery,
                 'time' => now()->format('H:i:s'),
                 'rows' => 0,
                 'duration' => 'error',
             ]);
-            $this->sqlHistory = array_slice($this->sqlHistory, 0, 20);
+            $this->sqlHistory[$this->activeConnection] = array_slice($this->sqlHistory[$this->activeConnection], 0, 20);
         }
     }
 
     public function loadHistoryQuery(int $index): void
     {
-        if (isset($this->sqlHistory[$index])) {
-            $this->sqlQuery = $this->sqlHistory[$index]['query'];
+        if (isset($this->sqlHistory[$this->activeConnection][$index])) {
+            $this->sqlQuery = $this->sqlHistory[$this->activeConnection][$index]['query'];
         }
     }
 
     public function explainSql(): void
     {
         $plugin = static::getPlugin();
+        $this->sqlResults = [];
+        $this->sqlStatus = null;
         $this->explainResults = [];
         $this->sqlError = '';
 
@@ -1509,6 +1585,40 @@ class DatabaseManager extends Page implements HasTable
     public function isQueryRunnerEnabled(): bool
     {
         return static::getPlugin()->isQueryRunnerEnabled();
+    }
+
+    public function isSqlReadOnly(): bool
+    {
+        return static::getPlugin()->isQueryRunnerReadOnly();
+    }
+
+    /**
+     * @return array{connection: string, database: string, driver: string, environment: string, mode: string}
+     */
+    public function getActiveConnectionContext(): array
+    {
+        $this->authorizeDatabaseConnection($this->activeConnection);
+
+        return [
+            'connection' => $this->activeConnection,
+            'database' => DB::connection($this->activeConnection)->getDatabaseName(),
+            'driver' => $this->getDriverName($this->activeConnection),
+            'environment' => app()->environment(),
+            'mode' => $this->isReadOnly() ? 'Read only' : 'Write enabled',
+        ];
+    }
+
+    protected function destructiveActionDescription(string $effect): string
+    {
+        $context = $this->getActiveConnectionContext();
+
+        return sprintf(
+            '%s Connection: %s. Database: %s. Environment: %s. This cannot be undone.',
+            $effect,
+            $context['connection'],
+            $context['database'],
+            $context['environment'],
+        );
     }
 
     public function getColumnTypes(): array

@@ -41,6 +41,19 @@
         .fdb-content { margin-top: 1rem; }
         .fdb-content .fi-ta { overflow-x: auto; }
         .fdb-content .fi-ta-content { min-width: max-content; }
+        .fdb-context { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem 1.5rem; padding: 0.75rem 1rem; margin-bottom: 1rem; border: 1px solid var(--gray-200); border-radius: 0.5rem; background: var(--gray-50); color: var(--gray-700); font-size: 0.875rem; }
+        .dark .fdb-context { background: var(--gray-800); border-color: var(--gray-700); color: var(--gray-200); }
+        .fdb-context-primary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.75rem; min-width: 0; }
+        .fdb-context-database { overflow-wrap: anywhere; color: var(--gray-500); }
+        .dark .fdb-context-database { color: var(--gray-300); }
+        .fdb-context-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+        .fdb-context-tag { padding: 0.25rem 0.5rem; border-radius: 0.375rem; background: var(--gray-200); color: var(--gray-800); font-size: 0.75rem; font-weight: 600; }
+        .dark .fdb-context-tag { background: var(--gray-700); color: var(--gray-100); }
+        .fdb-context-write { background: #fef3c7; color: #92400e; }
+        .dark .fdb-context-write { background: #78350f; color: #fef3c7; }
+        .fdb-table-link { padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 600; text-align: start; cursor: pointer; }
+        .fdb-table-link:hover { color: var(--primary-600); text-decoration: underline; }
+        .fdb-table-link:focus-visible { outline: 2px solid var(--primary-600); outline-offset: 3px; border-radius: 0.125rem; }
         .fdb-empty { display: flex; align-items: center; justify-content: center; height: 16rem; color: var(--gray-400); text-align: center; }
         .fdb-empty svg { width: 3rem; height: 3rem; margin: 0 auto 0.5rem; }
 
@@ -81,6 +94,26 @@
         /* SQL */
         .fdb-sql-textarea { display: block; width: 100%; padding: 0.75rem; font-family: ui-monospace, monospace; font-size: 0.875rem; border: 1px solid var(--gray-300); border-radius: 0.5rem; background: var(--gray-50); color: var(--gray-900); resize: vertical; min-height: 5rem; }
         .dark .fdb-sql-textarea { background: var(--gray-800); border-color: var(--gray-600); color: var(--gray-100); }
+        .fdb-sql-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem 1rem; margin-bottom: 0.75rem; }
+        .fdb-sql-heading h2 { font-size: 1.125rem; font-weight: 600; color: var(--gray-900); }
+        .dark .fdb-sql-heading h2 { color: var(--gray-100); }
+        .fdb-sql-heading span { font-size: 0.875rem; color: var(--gray-500); }
+        .dark .fdb-sql-heading span { color: var(--gray-300); }
+        .fdb-sql-label { display: block; margin-bottom: 0.375rem; font-size: 0.875rem; font-weight: 600; color: var(--gray-700); }
+        .dark .fdb-sql-label { color: var(--gray-200); }
+        .fdb-history-item { display: block; width: 100%; padding: 0.375rem 0.5rem; margin-bottom: 0.25rem; border: 1px solid var(--gray-200); border-radius: 0.25rem; background: white; color: var(--gray-700); font-family: ui-monospace, monospace; font-size: 0.75rem; text-align: start; cursor: pointer; }
+        .fdb-history-item:hover { background: var(--gray-100); }
+        .dark .fdb-history-item { background: var(--gray-800); border-color: var(--gray-700); color: var(--gray-200); }
+        .dark .fdb-history-item:hover { background: var(--gray-700); }
+        .fdb-history-item:focus-visible, .fdb-plan-toggle:focus-visible { outline: 2px solid var(--primary-600); outline-offset: 2px; }
+        .fdb-plan-toggle { display: flex; justify-content: space-between; align-items: center; width: 100%; padding: 0.75rem 1rem; border: 0; background: var(--primary-50); color: var(--primary-700); font: inherit; text-align: start; cursor: pointer; }
+        .dark .fdb-plan-toggle { background: var(--gray-800); color: var(--primary-400); }
+        .fdb-plan-content { padding: 1rem; background: var(--gray-50); }
+        .dark .fdb-plan-content { background: var(--gray-900); }
+        .fdb-explain-mode { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem; background: var(--gray-100); border-radius: 0.375rem; }
+        .dark .fdb-explain-mode { background: var(--gray-800); }
+        .fdb-sql-status { margin-top: 1rem; color: var(--gray-700); font-size: 0.875rem; }
+        .dark .fdb-sql-status { color: var(--gray-200); }
         .fdb-error-box { margin-top: 1rem; padding: 0.75rem; border-radius: 0.5rem; font-size: 0.875rem; background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
         .dark .fdb-error-box { background: rgba(220,38,38,0.1); border-color: rgba(220,38,38,0.3); color: #f87171; }
         .fdb-result-count { margin-top: 0.5rem; font-size: 0.75rem; color: var(--gray-400); }
@@ -108,9 +141,9 @@
     {{-- Toolbar --}}
     <div class="fdb-toolbar">
         <div class="fdb-toolbar-field">
-            <label>Connection</label>
+            <label for="fdb-connection">Connection</label>
             <x-filament::input.wrapper>
-                <x-filament::input.select wire:change="switchConnection($event.target.value)">
+                <x-filament::input.select id="fdb-connection" wire:change="switchConnection($event.target.value)">
                     @foreach($this->getAvailableConnections() as $conn)
                         <option value="{{ $conn }}" @selected($conn === $activeConnection) @disabled(!$this->isConnectionHealthy($conn))>
                             {{ $conn }} ({{ $this->isConnectionHealthy($conn) ? $this->getDriverName($conn) : '⚠ offline' }})
@@ -132,16 +165,21 @@
                     : $allTables;
             @endphp
             <div class="fdb-toolbar-field" style="width: 20rem;">
-                <label>Table ({{ count($allTables) }})</label>
+                <label for="fdb-table">Table ({{ count($allTables) }})</label>
                 <x-filament::input.wrapper>
                     <x-filament::input
+                        id="fdb-table-search"
                         type="text"
                         wire:model.live.debounce.300ms="tableFilter"
                         placeholder="Search tables..."
+                        aria-label="Search tables"
                         style="margin-bottom: 0.25rem;"
                     />
-                    <x-filament::input.select wire:change="selectTable($event.target.value)">
-                        <option value="">— Select a table —</option>
+                    <x-filament::input.select id="fdb-table" wire:change="selectTable($event.target.value)">
+                        <option value="">— Database overview —</option>
+                        @if($activeTable && !in_array($activeTable, array_column($filteredTables, 'name'), true))
+                            <option value="{{ $activeTable }}" selected>{{ $activeTable }} (current table)</option>
+                        @endif
                         @foreach($filteredTables as $table)
                             @php
                                 $displayName = $table['name'];
@@ -167,38 +205,54 @@
 
     </div>
 
-    @if($activeTable)
-        {{-- Tabs + danger actions --}}
-        <x-filament::tabs>
-            @php
-                $tabs = ['rows' => 'Rows', 'structure' => 'Structure', 'indexes' => 'Indexes', 'foreign-keys' => 'Foreign Keys', 'relationships' => 'Relationships'];
-                if ($this->isQueryRunnerEnabled()) $tabs['sql'] = 'SQL';
-            @endphp
-            @foreach($tabs as $tab => $label)
-                <x-filament::tabs.item :active="$activeTab === $tab" wire:click="switchTab('{{ $tab }}')">{{ $label }}</x-filament::tabs.item>
-            @endforeach
-        </x-filament::tabs>
+    @if($activeConnection && $this->isConnectionHealthy($activeConnection))
+        @php $context = $this->getActiveConnectionContext(); @endphp
+        <div class="fdb-context" aria-label="Active database context">
+            <div class="fdb-context-primary">
+                <strong>{{ $context['connection'] }}</strong>
+                <span class="fdb-context-database">{{ $context['database'] }} ({{ $context['driver'] }})</span>
+                @if($activeTable)
+                    <strong>Table: {{ $activeTable }}</strong>
+                @endif
+            </div>
+            <div class="fdb-context-tags">
+                <span class="fdb-context-tag">Environment: {{ $context['environment'] }}</span>
+                <span class="fdb-context-tag @if($context['mode'] === 'Write enabled') fdb-context-write @endif">{{ $context['mode'] }}</span>
+                @if($context['mode'] === 'Write enabled' && $this->isDestructivePrevented())
+                    <span class="fdb-context-tag">Destructive actions blocked</span>
+                @endif
+            </div>
+        </div>
+
+        @if($activeTable || $this->isQueryRunnerEnabled())
+            <x-filament::tabs>
+                @php
+                    $tabs = $activeTable
+                        ? ['overview' => 'Overview', 'rows' => 'Rows', 'structure' => 'Structure', 'indexes' => 'Indexes', 'foreign-keys' => 'Foreign Keys', 'relationships' => 'Relationships']
+                        : ['overview' => 'Overview'];
+                    if ($this->isQueryRunnerEnabled()) $tabs['sql'] = 'SQL';
+                @endphp
+                @foreach($tabs as $tab => $label)
+                    <x-filament::tabs.item :active="$activeTab === $tab" wire:click="switchTab('{{ $tab }}')">{{ $label }}</x-filament::tabs.item>
+                @endforeach
+            </x-filament::tabs>
+        @endif
 
         <div class="fdb-content">
-            @if($activeTab === 'rows')
-                @include('filament-database::pages.partials.rows')
-            @elseif($activeTab === 'structure')
-                @include('filament-database::pages.partials.structure')
-            @elseif($activeTab === 'indexes')
-                @include('filament-database::pages.partials.indexes')
-            @elseif($activeTab === 'foreign-keys')
-                @include('filament-database::pages.partials.foreign-keys')
-            @elseif($activeTab === 'relationships')
-                @include('filament-database::pages.partials.relationships')
-            @elseif($activeTab === 'sql')
+            @if($activeTab === 'sql' && $this->isQueryRunnerEnabled())
                 @include('filament-database::pages.partials.sql')
-            @endif
-        </div>
-    @else
-        @if($activeConnection && $this->isConnectionHealthy($activeConnection))
-            @php
-                $overview = $this->getDatabaseOverview($activeConnection);
-            @endphp
+            @elseif($activeTable && $activeTab === 'rows')
+                @include('filament-database::pages.partials.rows')
+            @elseif($activeTable && $activeTab === 'structure')
+                @include('filament-database::pages.partials.structure')
+            @elseif($activeTable && $activeTab === 'indexes')
+                @include('filament-database::pages.partials.indexes')
+            @elseif($activeTable && $activeTab === 'foreign-keys')
+                @include('filament-database::pages.partials.foreign-keys')
+            @elseif($activeTable && $activeTab === 'relationships')
+                @include('filament-database::pages.partials.relationships')
+            @else
+                @php $overview = $this->getDatabaseOverview($activeConnection); @endphp
             <div class="fdb-overview">
                 <div class="fdb-overview-header">
                     <h2>Database Overview</h2>
@@ -231,8 +285,10 @@
                                 </thead>
                                 <tbody>
                                     @foreach($overview['largest_tables'] as $table)
-                                        <tr wire:click="selectTable('{{ $table['name'] }}')" style="cursor: pointer;">
-                                            <td class="fdb-bold">{{ $table['name'] }}</td>
+                                        <tr>
+                                            <td class="fdb-bold">
+                                                <button type="button" class="fdb-table-link" wire:click="selectTable(@js($table['name']))">{{ $table['name'] }}</button>
+                                            </td>
                                             <td class="fdb-right">{{ number_format($table['rows']) }}</td>
                                         </tr>
                                     @endforeach
@@ -242,14 +298,15 @@
                     </div>
                 @endif
             </div>
-        @else
-            <div class="fdb-empty">
-                <div>
-                    <x-heroicon-o-circle-stack />
-                    <p>Select a table to get started</p>
-                </div>
+            @endif
+        </div>
+    @else
+        <div class="fdb-empty">
+            <div>
+                <x-heroicon-o-circle-stack />
+                <p>No database connection is available. Check the configured connections.</p>
             </div>
-        @endif
+        </div>
     @endif
 
     @if($showCreateTable) @include('filament-database::pages.partials.create-table-modal') @endif

@@ -19,7 +19,7 @@
                     <td>{{ ($idx['unique'] ?? false) ? 'Yes' : 'No' }}</td>
                 </tr>
             @empty
-                <tr><td colspan="4" class="fdb-empty-cell">No indexes.</td></tr>
+                <tr><td colspan="4" class="fdb-empty-cell">No indexes are defined for this table.</td></tr>
             @endforelse
         </tbody>
     </table>

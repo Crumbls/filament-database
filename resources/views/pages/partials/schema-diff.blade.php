@@ -1,10 +1,11 @@
 @if($showSchemaDiff && $schemaDiff)
     <div class="fdb-modal-overlay" wire:click.self="closeSchemaDiff">
-        <div class="fdb-modal fdb-modal-lg" @click.stop>
+        <div class="fdb-modal fdb-modal-lg" role="dialog" aria-modal="true" aria-labelledby="fdb-schema-diff-title" tabindex="-1" x-data x-ref="dialog" x-trap.noscroll="true" x-init="$nextTick(() => $refs.dialog.focus())" x-on:keydown.escape.window="$wire.closeSchemaDiff()" @click.stop>
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-                <h3 style="margin: 0;">Schema Comparison</h3>
+                <h3 id="fdb-schema-diff-title" style="margin: 0;">Schema Comparison</h3>
                 <x-filament::icon-button
                     icon="heroicon-m-x-mark"
+                    aria-label="Close schema comparison"
                     wire:click="closeSchemaDiff"
                 />
             </div>

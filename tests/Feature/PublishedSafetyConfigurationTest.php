@@ -225,4 +225,49 @@ describe('Published safety configuration', function () {
             ->call('runQuery', 'SELECT * FROM categories', 'testing')
             ->assertForbidden();
     });
+
+    it('opens SQL without a table and keeps query history within its connection', function () {
+        config()->set('filament-database.connections', ['testing', 'secondary']);
+        config()->set('filament-database.query_runner', true);
+        $this->seedTestData();
+
+        registerPublishedSafetyConfigurationPanel(
+            (new FilamentDatabasePlugin())->authorize(fn (): bool => true),
+        );
+
+        $component = Livewire::test(PublishedSafetyConfigurationPage::class)
+            ->assertSet('activeTable', '')
+            ->call('switchTab', 'sql')
+            ->assertSet('activeTab', 'sql')
+            ->set('sqlQuery', 'SELECT * FROM users WHERE id = -1')
+            ->call('executeSql')
+            ->assertSet('sqlStatus', 'Query completed. No rows returned.');
+
+        $component
+            ->call('switchConnection', 'secondary')
+            ->assertSet('activeTab', 'overview')
+            ->assertSet('sqlQuery', '')
+            ->assertSet('sqlStatus', null)
+            ->call('loadHistoryQuery', 0)
+            ->assertSet('sqlQuery', '')
+            ->call('switchConnection', 'testing')
+            ->call('loadHistoryQuery', 0)
+            ->assertSet('sqlQuery', 'SELECT * FROM users WHERE id = -1');
+    });
+
+    it('returns to the overview when the table selection is cleared', function () {
+        config()->set('filament-database.connections', ['testing']);
+        $this->seedTestData();
+
+        registerPublishedSafetyConfigurationPanel(
+            (new FilamentDatabasePlugin())->authorize(fn (): bool => true),
+        );
+
+        Livewire::test(PublishedSafetyConfigurationPage::class)
+            ->call('selectTable', 'users')
+            ->assertSet('activeTab', 'rows')
+            ->call('selectTable', '')
+            ->assertSet('activeTable', '')
+            ->assertSet('activeTab', 'overview');
+    });
 });

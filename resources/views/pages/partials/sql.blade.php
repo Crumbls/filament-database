@@ -1,9 +1,15 @@
 <div>
+    <div class="fdb-sql-heading">
+        <h2>SQL workspace</h2>
+        <span>Connection: {{ $activeConnection }} · {{ $this->isSqlReadOnly() ? 'Read-only queries' : 'Write queries enabled' }}</span>
+    </div>
     <div class="fdb-field">
+        <label class="fdb-sql-label" for="fdb-sql-query">SQL query</label>
         <textarea 
+            id="fdb-sql-query"
             wire:model="sqlQuery" 
             rows="4" 
-            placeholder="SELECT * FROM {{ $activeTable }} LIMIT 100" 
+            placeholder="{{ $activeTable ? 'SELECT * FROM ' . $activeTable . ' LIMIT 100' : 'SELECT * FROM table_name LIMIT 100' }}"
             class="fdb-sql-textarea"
             @keydown.ctrl.enter="$wire.executeSql()"
             @keydown.meta.enter="$wire.executeSql()"
@@ -23,7 +29,7 @@
         @endphp
         
         @if($supportsAnalyze)
-            <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem; background: var(--gray-100); border-radius: 0.375rem;">
+            <div class="fdb-explain-mode" role="group" aria-label="Explain mode">
                 <label style="display: flex; align-items: center; gap: 0.375rem; font-size: 0.875rem; cursor: pointer;">
                     <input type="radio" wire:model.live="explainType" value="explain" style="cursor: pointer;">
                     <span>EXPLAIN</span>
@@ -36,33 +42,32 @@
         @endif
     </div>
 
-    @if(count($sqlHistory) > 0)
+    @if(count($sqlHistory[$activeConnection] ?? []) > 0)
         <div style="margin-top: 1rem;">
             <h4 style="font-size: 0.75rem; font-weight: 600; text-transform: uppercase; color: var(--gray-500); margin-bottom: 0.5rem;">Recent Queries</h4>
-            <div style="max-height: 12rem; overflow-y: auto; border: 1px solid var(--gray-200); border-radius: 0.375rem; padding: 0.5rem; background: var(--gray-50);">
-                @foreach($sqlHistory as $index => $item)
-                    <div wire:click="loadHistoryQuery({{ $index }})"
-                         style="cursor: pointer; padding: 0.375rem 0.5rem; margin-bottom: 0.25rem; font-size: 0.75rem; font-family: monospace; background: white; border-radius: 0.25rem; border: 1px solid var(--gray-200);"
-                         onmouseover="this.style.background='var(--gray-100)'"
-                         onmouseout="this.style.background='white'">
-                        <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;">
-                            <div style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--gray-700);">
+            <div style="max-height: 12rem; overflow-y: auto; border: 1px solid var(--gray-200); border-radius: 0.375rem; padding: 0.5rem;">
+                @foreach($sqlHistory[$activeConnection] as $index => $item)
+                    <button type="button" class="fdb-history-item" wire:click="loadHistoryQuery({{ $index }})" title="Load query: {{ $item['query'] }}">
+                        <span style="display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;">
+                            <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                                 {{ Str::limit($item['query'], 80) }}
-                            </div>
-                            <div style="display: flex; gap: 0.5rem; font-size: 0.7rem; color: var(--gray-500); white-space: nowrap;">
+                            </span>
+                            <span style="display: flex; gap: 0.5rem; font-size: 0.7rem; color: var(--gray-500); white-space: nowrap;">
                                 <span>{{ $item['time'] }}</span>
                                 <span>{{ $item['rows'] }} row(s)</span>
                                 <span>{{ $item['duration'] }}</span>
-                            </div>
-                        </div>
-                    </div>
+                            </span>
+                        </span>
+                    </button>
                 @endforeach
             </div>
         </div>
     @endif
 
     @if($sqlError)
-        <div class="fdb-error-box">{{ $sqlError }}</div>
+        <div class="fdb-error-box" role="alert">{{ $sqlError }}</div>
+    @elseif($sqlStatus)
+        <p class="fdb-sql-status" role="status" aria-live="polite">{{ $sqlStatus }}</p>
     @endif
 
     @if(count($sqlResults))
@@ -88,28 +93,26 @@
                 </tbody>
             </table>
         </div>
-        <p class="fdb-result-count">{{ count($sqlResults) }} row(s) returned</p>
     @endif
 
     @if(count($explainResults))
         <div x-data="{ open: true }" style="margin-top: 1.5rem; border: 1px solid var(--primary-500); border-radius: 0.5rem; overflow: hidden;">
-            <div @click="open = !open" 
-                 style="cursor: pointer; padding: 0.75rem 1rem; background: var(--primary-50); display: flex; justify-content: space-between; align-items: center; user-select: none;">
-                <h4 style="font-weight: 600; color: var(--primary-700); margin: 0;">
+            <button type="button" class="fdb-plan-toggle" x-on:click="open = !open" x-bind:aria-expanded="open.toString()" aria-controls="fdb-explain-results">
+                <span style="font-weight: 600;">
                     Query Execution Plan
                     @if($explainType === 'analyze')
-                        <span style="font-size: 0.75rem; font-weight: normal; color: var(--primary-600);">(ANALYZE)</span>
+                        <span style="font-size: 0.75rem; font-weight: normal;">(ANALYZE)</span>
                     @endif
-                </h4>
-                <svg x-show="!open" style="width: 1.25rem; height: 1.25rem; color: var(--primary-600);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                </span>
+                <svg x-show="!open" aria-hidden="true" style="width: 1.25rem; height: 1.25rem;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
                 </svg>
-                <svg x-show="open" style="width: 1.25rem; height: 1.25rem; color: var(--primary-600);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg x-show="open" aria-hidden="true" style="width: 1.25rem; height: 1.25rem;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"></path>
                 </svg>
-            </div>
+            </button>
             
-            <div x-show="open" x-collapse style="padding: 1rem; background: white;">
+            <div id="fdb-explain-results" class="fdb-plan-content" x-show="open" x-collapse>
                 @if($explainFormat === 'table')
                     {{-- Table format for MySQL EXPLAIN and SQLite EXPLAIN QUERY PLAN --}}
                     <div class="fdb-table-wrap">
