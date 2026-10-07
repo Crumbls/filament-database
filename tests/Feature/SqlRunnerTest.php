@@ -70,6 +70,30 @@ describe('SQL Runner', function () {
             ->toHaveCount(500);
     });
 
+    it('runs read-only SQL with database writes disabled and restores the connection', function () {
+        $guarded = new class {
+            use InteractsWithDatabase;
+
+            protected function shouldGuardReadOnlySql(): bool
+            {
+                return true;
+            }
+        };
+
+        $pdo = DB::connection('testing')->getPdo();
+        $pdo->sqliteCreateFunction('try_insert_category', function () use ($pdo): int {
+            $pdo->exec("INSERT INTO categories (name) VALUES ('Unwanted')");
+
+            return 1;
+        });
+
+        expect(fn () => $guarded->runQuery('SELECT try_insert_category()', 'testing'))
+            ->toThrow(\Illuminate\Database\QueryException::class);
+
+        expect(DB::connection('testing')->table('categories')->count())->toBe(2)
+            ->and((int) $pdo->query('PRAGMA query_only')->fetchColumn())->toBe(0);
+    });
+
     it('accepts only explicitly safe read-only statement shapes', function (string $sql) {
         expect($this->db->queryIsReadOnly($sql))->toBeTrue();
     })->with([
@@ -118,6 +142,14 @@ describe('SQL Runner', function () {
             $plugin = new FilamentDatabasePlugin();
 
             expect($plugin->isQueryRunnerEnabled())->toBeFalse();
+        });
+
+        it('disables arbitrary SQL when tables are hidden or allowlisted', function () {
+            config()->set('filament-database.query_runner', true);
+
+            expect((new FilamentDatabasePlugin())->hideTables(['users'])->isQueryRunnerEnabled())->toBeFalse()
+                ->and((new FilamentDatabasePlugin())->showOnlyTables(['categories'])->isQueryRunnerEnabled())->toBeFalse()
+                ->and((new FilamentDatabasePlugin())->isQueryRunnerEnabled())->toBeTrue();
         });
     });
 });

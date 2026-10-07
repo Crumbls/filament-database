@@ -252,6 +252,10 @@ class FilamentDatabasePlugin implements Plugin
 
     public function isQueryRunnerEnabled(): bool
     {
+        if ($this->hiddenTables !== [] || $this->visibleTables !== null) {
+            return false;
+        }
+
         return $this->queryRunnerEnabled
             ?? (bool) config('filament-database.query_runner', false);
     }

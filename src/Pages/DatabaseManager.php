@@ -185,6 +185,11 @@ class DatabaseManager extends Page implements HasTable
         }
     }
 
+    protected function shouldGuardReadOnlySql(): bool
+    {
+        return static::getPlugin()->isQueryRunnerReadOnly();
+    }
+
     protected function authorizeRowMutation(
         string $table,
         array $where,
@@ -580,12 +585,14 @@ class DatabaseManager extends Page implements HasTable
                         ->label('Rows')
                         ->options([
                             'current' => 'Current page only',
-                            'all' => 'All rows',
+                            'all' => 'Up to ' . number_format(max(1, (int) config('filament-database.max_export_rows', 10_000))) . ' rows',
                         ])
                         ->default('current')
                         ->required(),
                 ])
                 ->action(function (array $data) {
+                    $this->authorizeDatabaseTable($this->activeTable, $this->activeConnection);
+
                     $allRows = $data['scope'] === 'all';
                     $currentPageData = $allRows ? null : $this->getTableRecords()->map(fn($r) => $r->getAttributes())->toArray();
 
@@ -615,6 +622,12 @@ class DatabaseManager extends Page implements HasTable
                 ])
                 ->modalWidth('2xl')
                 ->action(function (array $data) use ($plugin) {
+                    $this->authorizeDatabaseTable($this->activeTable, $this->activeConnection);
+
+                    if ($plugin->isReadOnly()) {
+                        throw new AuthorizationException('Database import access denied.');
+                    }
+
                     try {
                         $uploadedFile = $data['csv_file'];
                         $filePath = $uploadedFile instanceof \Livewire\Features\SupportFileUploads\TemporaryUploadedFile

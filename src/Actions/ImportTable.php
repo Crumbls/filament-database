@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Crumbls\FilamentDatabase\Actions;
 
+use Illuminate\Database\Connection;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 use Throwable;
@@ -16,7 +17,9 @@ class ImportTable
 
     private const MAX_CSV_ROWS = 50_000;
 
-    protected array $csvData = [];
+    protected ?string $csvPath = null;
+
+    protected int $totalRows = 0;
 
     protected array $headers = [];
 
@@ -44,63 +47,25 @@ class ImportTable
      */
     public function parseCsv(string $filePath): array
     {
-        if (! is_file($filePath) || ! is_readable($filePath)) {
-            throw new RuntimeException('CSV file not found or is not readable.');
-        }
+        $this->headers = [];
+        $this->csvPath = null;
+        $this->totalRows = 0;
+        $preview = [];
 
-        $fileSize = filesize($filePath);
+        foreach ($this->readCsvRows($filePath) as $row) {
+            $this->totalRows++;
 
-        if ($fileSize === false || $fileSize > self::MAX_FILE_SIZE_KILOBYTES * 1024) {
-            throw new RuntimeException('CSV files may not exceed 10 MB.');
-        }
-
-        $handle = fopen($filePath, 'rb');
-
-        if ($handle === false) {
-            throw new RuntimeException('CSV file could not be opened.');
-        }
-
-        try {
-            $headers = fgetcsv($handle, null, ',', '"', '');
-
-            if ($headers === false) {
-                throw new RuntimeException('CSV file must contain a header row.');
+            if (count($preview) < 5) {
+                $preview[] = $row;
             }
-
-            $this->headers = $this->normalizeHeaders($headers);
-            $this->csvData = [];
-
-            while (($row = fgetcsv($handle, null, ',', '"', '')) !== false) {
-                if ($row === [null]) {
-                    continue;
-                }
-
-                if (count($row) !== count($this->headers)) {
-                    throw new RuntimeException(sprintf(
-                        'CSV row %d contains %d columns; expected %d.',
-                        count($this->csvData) + 2,
-                        count($row),
-                        count($this->headers),
-                    ));
-                }
-
-                if (count($this->csvData) >= self::MAX_CSV_ROWS) {
-                    throw new RuntimeException(sprintf(
-                        'CSV files may not contain more than %d data rows.',
-                        self::MAX_CSV_ROWS,
-                    ));
-                }
-
-                $this->csvData[] = $row;
-            }
-        } finally {
-            fclose($handle);
         }
+
+        $this->csvPath = $filePath;
 
         return [
             'headers' => $this->headers,
-            'preview' => array_slice($this->csvData, 0, 5),
-            'total' => count($this->csvData),
+            'preview' => $preview,
+            'total' => $this->totalRows,
         ];
     }
 
@@ -136,6 +101,10 @@ class ImportTable
      */
     public function import(array $columnMapping): array
     {
+        if ($this->csvPath === null) {
+            throw new RuntimeException('CSV file must be parsed before import.');
+        }
+
         $this->columnMapping = $this->validateColumnMapping($columnMapping);
         $this->successCount = 0;
         $this->errorCount = 0;
@@ -143,39 +112,25 @@ class ImportTable
 
         $connection = DB::connection($this->connection);
 
-        foreach (array_chunk($this->csvData, 500, preserve_keys: true) as $rows) {
-            $chunk = [];
+        $chunk = [];
 
-            foreach ($rows as $rowIndex => $row) {
-                $data = [];
+        foreach ($this->readCsvRows($this->csvPath) as $rowIndex => $row) {
+            $data = [];
 
-                foreach ($this->columnMapping as $csvIndex => $tableColumn) {
-                    $data[$tableColumn] = $row[$csvIndex] === '' ? null : $row[$csvIndex];
-                }
-
-                $chunk[] = ['index' => $rowIndex + 2, 'data' => $data];
+            foreach ($this->columnMapping as $csvIndex => $tableColumn) {
+                $data[$tableColumn] = $row[$csvIndex] === '' ? null : $row[$csvIndex];
             }
 
-            $batch = array_column($chunk, 'data');
+            $chunk[] = ['index' => $rowIndex, 'data' => $data];
 
-            try {
-                $connection->transaction(
-                    fn (): bool => $connection->table($this->table)->insert($batch),
-                );
-                $this->successCount += count($batch);
-            } catch (Throwable) {
-                foreach ($chunk as $item) {
-                    try {
-                        $connection->transaction(
-                            fn (): bool => $connection->table($this->table)->insert($item['data']),
-                        );
-                        $this->successCount++;
-                    } catch (Throwable) {
-                        $this->errorCount++;
-                        $this->errors[] = "Row {$item['index']} could not be imported.";
-                    }
-                }
+            if (count($chunk) === 500) {
+                $this->insertChunk($connection, $chunk);
+                $chunk = [];
             }
+        }
+
+        if ($chunk !== []) {
+            $this->insertChunk($connection, $chunk);
         }
 
         return [
@@ -192,7 +147,100 @@ class ImportTable
 
     public function getCsvData(): array
     {
-        return $this->csvData;
+        if ($this->csvPath === null) {
+            return [];
+        }
+
+        return array_values(iterator_to_array($this->readCsvRows($this->csvPath)));
+    }
+
+    /** @return \Generator<int, array<int, string|null>> */
+    protected function readCsvRows(string $filePath): \Generator
+    {
+        if (! is_file($filePath) || ! is_readable($filePath)) {
+            throw new RuntimeException('CSV file not found or is not readable.');
+        }
+
+        $fileSize = filesize($filePath);
+
+        if ($fileSize === false || $fileSize > self::MAX_FILE_SIZE_KILOBYTES * 1024) {
+            throw new RuntimeException('CSV files may not exceed 10 MB.');
+        }
+
+        $handle = fopen($filePath, 'rb');
+
+        if ($handle === false) {
+            throw new RuntimeException('CSV file could not be opened.');
+        }
+
+        try {
+            $headers = fgetcsv($handle, null, ',', '"', '');
+
+            if ($headers === false) {
+                throw new RuntimeException('CSV file must contain a header row.');
+            }
+
+            $normalizedHeaders = $this->normalizeHeaders($headers);
+
+            if ($this->headers !== [] && $this->headers !== $normalizedHeaders) {
+                throw new RuntimeException('CSV headers changed after parsing.');
+            }
+
+            $this->headers = $normalizedHeaders;
+            $rowCount = 0;
+
+            while (($row = fgetcsv($handle, null, ',', '"', '')) !== false) {
+                if ($row === [null]) {
+                    continue;
+                }
+
+                if (count($row) !== count($this->headers)) {
+                    throw new RuntimeException(sprintf(
+                        'CSV row %d contains %d columns; expected %d.',
+                        $rowCount + 2,
+                        count($row),
+                        count($this->headers),
+                    ));
+                }
+
+                if ($rowCount >= self::MAX_CSV_ROWS) {
+                    throw new RuntimeException(sprintf(
+                        'CSV files may not contain more than %d data rows.',
+                        self::MAX_CSV_ROWS,
+                    ));
+                }
+
+                $rowCount++;
+                yield $rowCount + 1 => $row;
+            }
+        } finally {
+            fclose($handle);
+        }
+    }
+
+    /** @param array<int, array{index: int, data: array<string, mixed>}> $chunk */
+    protected function insertChunk(Connection $connection, array $chunk): void
+    {
+        $batch = array_column($chunk, 'data');
+
+        try {
+            $connection->transaction(
+                fn (): bool => $connection->table($this->table)->insert($batch),
+            );
+            $this->successCount += count($batch);
+        } catch (Throwable) {
+            foreach ($chunk as $item) {
+                try {
+                    $connection->transaction(
+                        fn (): bool => $connection->table($this->table)->insert($item['data']),
+                    );
+                    $this->successCount++;
+                } catch (Throwable) {
+                    $this->errorCount++;
+                    $this->errors[] = "Row {$item['index']} could not be imported.";
+                }
+            }
+        }
     }
 
     protected function normalizeHeaders(array $headers): array

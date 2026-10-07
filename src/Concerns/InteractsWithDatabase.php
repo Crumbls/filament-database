@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace Crumbls\FilamentDatabase\Concerns;
 
 use Crumbls\FilamentDatabase\FilamentDatabasePlugin;
+use Illuminate\Database\Connection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use PDO;
 
 trait InteractsWithDatabase
 {
@@ -53,6 +55,11 @@ trait InteractsWithDatabase
     protected function authorizeSqlQuery(string $sql, ?string $connection): void
     {
         $this->authorizeDatabaseConnection($connection);
+    }
+
+    protected function shouldGuardReadOnlySql(): bool
+    {
+        return false;
     }
 
     protected function authorizeRowMutation(
@@ -229,10 +236,21 @@ trait InteractsWithDatabase
 
         $sql = trim($sql);
 
+        $database = DB::connection($connection);
+
+        if ($this->shouldGuardReadOnlySql()) {
+            return $this->runInReadOnlyTransaction($database, fn (): array => $this->executeSqlStatement($database, $sql));
+        }
+
+        return $this->executeSqlStatement($database, $sql);
+    }
+
+    protected function executeSqlStatement(Connection $database, string $sql): array
+    {
         if ($this->sqlReturnsRows($sql)) {
             $rows = [];
 
-            foreach (DB::connection($connection)->cursor($sql) as $row) {
+            foreach ($database->cursor($sql, [], false) as $row) {
                 $rows[] = $row;
 
                 if (count($rows) >= self::MAX_SQL_RESULT_ROWS) {
@@ -243,7 +261,71 @@ trait InteractsWithDatabase
             return $rows;
         }
 
-        return [['affected_rows' => DB::connection($connection)->statement($sql)]];
+        return [['affected_rows' => $database->statement($sql)]];
+    }
+
+    /**
+     * SQL classification is only a first check. Execute accepted reads under the
+     * database engine's read-only mode as a second boundary against writes.
+     */
+    protected function runInReadOnlyTransaction(Connection $database, callable $query): array
+    {
+        $driver = $database->getDriverName();
+
+        if ($driver === 'pgsql') {
+            return $database->transaction(function () use ($database, $query): array {
+                $database->statement('SET TRANSACTION READ ONLY');
+                $database->statement('SET LOCAL statement_timeout = ' . $this->sqlStatementTimeoutMilliseconds());
+
+                return $query();
+            });
+        }
+
+        if ($driver === 'mysql' || $driver === 'mariadb') {
+            if ($database->transactionLevel() > 0) {
+                throw new \LogicException('Read-only SQL cannot run inside an existing transaction.');
+            }
+
+            $pdo = $database->getPdo();
+            $isMariaDb = $driver === 'mariadb'
+                || str_contains(strtolower((string) $pdo->getAttribute(PDO::ATTR_SERVER_VERSION)), 'mariadb');
+            $timeoutVariable = $isMariaDb ? 'max_statement_time' : 'max_execution_time';
+            $previousTimeout = $pdo->query("SELECT @@SESSION.{$timeoutVariable}")->fetchColumn();
+            $timeout = $isMariaDb
+                ? number_format($this->sqlStatementTimeoutMilliseconds() / 1000, 3, '.', '')
+                : (string) $this->sqlStatementTimeoutMilliseconds();
+
+            $pdo->exec("SET SESSION {$timeoutVariable} = {$timeout}");
+
+            try {
+                $database->statement('SET TRANSACTION READ ONLY');
+
+                return $database->transaction($query);
+            } finally {
+                $pdo->exec("SET SESSION {$timeoutVariable} = " . (float) $previousTimeout);
+            }
+        }
+
+        if ($driver === 'sqlite') {
+            $pdo = $database->getPdo();
+            $wasReadOnly = (int) $pdo->query('PRAGMA query_only')->fetchColumn() === 1;
+            $pdo->exec('PRAGMA query_only = ON');
+
+            try {
+                return $query();
+            } finally {
+                if (! $wasReadOnly) {
+                    $pdo->exec('PRAGMA query_only = OFF');
+                }
+            }
+        }
+
+        throw new \LogicException("Read-only SQL is not supported for the {$driver} driver.");
+    }
+
+    protected function sqlStatementTimeoutMilliseconds(): int
+    {
+        return min(60_000, max(1, (int) config('filament-database.sql_statement_timeout_ms', 5000)));
     }
 
     public function dropTable(string $table, ?string $connection = null): void

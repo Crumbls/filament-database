@@ -39,6 +39,13 @@ return [
     */
     'query_runner' => false,
 
+    // Read-only SQL timeout for PostgreSQL, MySQL, and MariaDB (1–60 seconds).
+    // SQLite needs a deployment-level execution timeout.
+    'sql_statement_timeout_ms' => 5000,
+
+    // Maximum rows returned by a single CSV, JSON, or SQL export.
+    'max_export_rows' => 10_000,
+
     /*
     |--------------------------------------------------------------------------
     | Navigation

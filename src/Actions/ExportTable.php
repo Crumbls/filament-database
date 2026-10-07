@@ -47,14 +47,15 @@ class ExportTable
 
     protected function getData(): \Illuminate\Support\LazyCollection
     {
+        $maxRows = max(1, (int) config('filament-database.max_export_rows', 10_000));
+
         if (!$this->allRows && $this->currentPageData !== null) {
-            // Return current page data as a lazy collection
-            return \Illuminate\Support\LazyCollection::make($this->currentPageData);
+            return \Illuminate\Support\LazyCollection::make($this->currentPageData)->take($maxRows);
         }
 
-        // Stream all rows
         return DB::connection($this->connection)
             ->table($this->table)
+            ->limit($maxRows)
             ->cursor();
     }
 
@@ -66,12 +67,26 @@ class ExportTable
             $row = (array) $row;
 
             if ($firstRow) {
-                fputcsv($handle, array_keys($row));
+                fputcsv($handle, array_map($this->spreadsheetSafeValue(...), array_keys($row)), ',', '"', '');
                 $firstRow = false;
             }
 
-            fputcsv($handle, array_values($row));
+            fputcsv($handle, array_map($this->spreadsheetSafeValue(...), array_values($row)), ',', '"', '');
         }
+    }
+
+    protected function spreadsheetSafeValue(mixed $value): mixed
+    {
+        if (! is_string($value)) {
+            return $value;
+        }
+
+        // Keep formulas as text when opened in spreadsheet software.
+        if (preg_match('/\A[\x00-\x20]*(?:[=+\-@]|＝|＋|－|＠)/', $value) === 1) {
+            return "\t{$value}";
+        }
+
+        return $value;
     }
 
     protected function exportJson($handle): void

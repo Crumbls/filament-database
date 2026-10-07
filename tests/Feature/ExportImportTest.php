@@ -66,6 +66,41 @@ describe('Export and Import', function () {
             expect($response)->toBeInstanceOf(\Symfony\Component\HttpFoundation\StreamedResponse::class);
         });
 
+        it('exports spreadsheet formulas as text in CSV', function () {
+            $response = ExportTable::make('users', 'testing', 'csv', false, [[
+                'name' => '=HYPERLINK("https://example.test")',
+                'email' => '  +SUM(1,2)',
+                'password' => 'ordinary text',
+            ]])->download();
+
+            ob_start();
+            $response->sendContent();
+            $content = ob_get_clean();
+            $handle = fopen('php://memory', 'w+');
+            fwrite($handle, $content);
+            rewind($handle);
+            fgetcsv($handle, null, ',', '"', '');
+            $values = fgetcsv($handle, null, ',', '"', '');
+            fclose($handle);
+
+            expect($values)->toBe([
+                "\t=HYPERLINK(\"https://example.test\")",
+                "\t  +SUM(1,2)",
+                'ordinary text',
+            ]);
+        });
+
+        it('caps full-table exports before the database cursor runs', function () {
+            config()->set('filament-database.max_export_rows', 1);
+
+            $response = ExportTable::make('users', 'testing', 'json', true)->download();
+            ob_start();
+            $response->sendContent();
+            $rows = json_decode(ob_get_clean(), true);
+
+            expect($rows)->toHaveCount(1);
+        });
+
         it('returns response for valid formats', function () {
             $formats = ['csv', 'json', 'sql'];
             
@@ -137,6 +172,26 @@ describe('Export and Import', function () {
             expect($result['success'])->toBe(2)
                 ->and($result['errors'])->toBe(0)
                 ->and(DB::connection('testing')->table('users')->count())->toBe(4); // 2 seeded + 2 imported
+        });
+
+        it('imports more than one CSV chunk while retaining only a preview', function () {
+            $handle = fopen($this->csvPath, 'wb');
+            fputcsv($handle, ['name', 'email', 'password', 'is_admin']);
+
+            for ($index = 0; $index < 501; $index++) {
+                fputcsv($handle, ["User {$index}", "user{$index}@example.test", 'secret', '0']);
+            }
+
+            fclose($handle);
+
+            $importer = ImportTable::make('users', 'testing');
+            $parsed = $importer->parseCsv($this->csvPath);
+            $result = $importer->import($importer->autoMapColumns());
+
+            expect($parsed['total'])->toBe(501)
+                ->and($parsed['preview'])->toHaveCount(5)
+                ->and($result['success'])->toBe(501)
+                ->and(DB::connection('testing')->table('users')->count())->toBe(503);
         });
 
         it('handles mismatched columns gracefully', function () {

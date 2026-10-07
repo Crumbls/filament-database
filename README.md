@@ -153,8 +153,23 @@ FilamentDatabasePlugin::make()
 
 Read-only SQL classification is defense in depth. Production read-only panels
 should use database credentials without DML, DDL, file, function-execution, or
-administrative privileges and should configure a server-side statement timeout.
-SQL result sets returned to Livewire are capped at 500 rows.
+administrative privileges. Accepted read-only SQL runs in a read-only database
+transaction on PostgreSQL and MySQL/MariaDB, or with SQLite `query_only` enabled.
+The SQL runner is disabled whenever `hideTables()` or `showOnlyTables()` is set:
+arbitrary SQL cannot safely enforce those table restrictions.
+
+Read-only SQL has a five-second server-side timeout by default on PostgreSQL,
+MySQL, and MariaDB. Set `sql_statement_timeout_ms` in the published config to
+adjust it (maximum 60 seconds). SQLite and write-enabled SQL need database or
+deployment-level execution limits. SQL result sets returned to Livewire are
+capped at 500 rows.
+
+CSV exports prefix common spreadsheet formula cells with a tab so Excel treats
+them as text. Spreadsheet applications differ, and this changes those cell
+values; use JSON or SQL export when exact values are required. Exports are
+capped at 10,000 rows by default; configure
+`max_export_rows` in the published config to change the cap. CSV import parses
+and inserts in 500-row chunks rather than retaining the entire file in memory.
 
 Row-level record and selection actions require a genuine single-column primary
 key. Keyless and composite-key tables remain browse-only for existing records.

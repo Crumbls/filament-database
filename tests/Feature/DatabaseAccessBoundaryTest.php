@@ -183,6 +183,21 @@ describe('Database manager access boundary', function () {
             ->assertForbidden();
     });
 
+    it('blocks SQL access when tables are hidden', function () {
+        config()->set('filament-database.query_runner', true);
+
+        registerDatabaseManagerPanel(
+            (new FilamentDatabasePlugin())
+                ->authorize(fn (): bool => true)
+                ->connections(['testing'])
+                ->hideTables(['users']),
+        );
+
+        Livewire::test(DatabaseAccessBoundaryPage::class)
+            ->call('runQuery', 'SELECT * FROM users', 'testing')
+            ->assertForbidden();
+    });
+
     it('allows selecting an existing visible table on an allowed connection', function () {
         registerDatabaseManagerPanel(
             (new FilamentDatabasePlugin())
